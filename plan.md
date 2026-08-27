@@ -267,18 +267,46 @@ it force-closes open paths, which is the bug that motivated the project.
   implementation now.
 
 ### 1.6 Toolpath linking & ordering
-Port the one genuinely clever idea in jscut (`js/Cam.js`).
-- [ ] `mergePaths` — greedy nearest-neighbour ordering over path endpoints
-- [ ] `crosses(bounds, a, b)` test — if the connector between two loops stays inside already-cleared material, concatenate them into one continuous path instead of retracting
+**This is about plunges, not seconds.** Greg's call, and the measurements back
+it: "the machine moves pretty quick so I personally don't care about" travel
+time. Every travel-time optimisation below is therefore either dropped or
+demoted; what survives is what reduces plunges, or what stops a part coming
+loose. Measured on painted_ladies_v001.svg at a 3.175mm tool:
+
+| | plunges | travel |
+|---|---|---|
+| as generated | 5 / 9 | 246 / 263 mm |
+| nearest-first (jscut's `mergePaths`) | 5 / 9 | **434 / 397 mm** |
+| chained | 4 / 6 | 245 / 262 mm |
+| chained, slivers dropped | **1 / 4** | 245 / 262 mm |
+
+- [x] ~~`mergePaths` — greedy nearest-neighbour ordering~~ **Rejected, and it is
+  actively harmful.** jscut can re-enter a closed loop at any vertex, so nearest-
+  start is a fair proxy for nearest-anything. Our open paths have two ends and a
+  fixed direction, so greedy grabs a path because its START is near and lands 357mm
+  away at the far end. It nearly doubles travel against doing nothing at all.
+- [ ] `crosses(bounds, a, b)` — **kept, and this is the valuable half.** For open
+  paths "bounds" is the tool's own swept outline, which `offsetBothSides` already
+  returns. Grow it by 0.01mm first: a cut piece's endpoints sit EXACTLY on the
+  outline, so a strict inside-test rejects its own input. Validated on the skyline —
+  the band flips exactly the four 0.25mm adjacencies to "stay down" and still
+  rejects a 38mm connector that holds a full 1.5875mm clearance from the source
+  while crossing open air above the roofs. **Clearance from the line is not the
+  test; being inside material already being removed is.**
 - [ ] `safeToClose` flag → skip retracts between depth passes when the closing chord stays in bounds
-- [ ] Inner-before-outer ordering (or parts fall out mid-job)
-- [ ] Replace jscut's O(n²)-over-every-point search with endpoint-only + a spatial index
+- [ ] **Inner-before-outer ordering.** The one hard constraint here: it is not an
+  optimisation, it stops a part becoming a loose piece under a spinning cutter.
 - [ ] **Drop cut fragments not worth a plunge.** `openOffset` keeps every piece its
   geometry justifies, down to fractions of a millimetre, because a geometry module
   has no business deciding what is worth cutting. Linking DOES know the tool: a
   piece shorter than the cutter diameter removes nothing the plunge has not already
-  removed, and costs a lift, a rapid, a plunge and a retract to do it. Measured on
-  the painted-ladies skyline at a 3.175mm tool: pieces of 0.3, 0.4 and 0.5mm.
+  removed. On the skyline that is 3 slivers totalling 1.2mm, and dropping them takes
+  the whole 450mm cut from 4 plunges to **one**.
+- [ ] Ordering itself: keep the generated order. Measured gain from any reordering
+  once chaining is in: 1mm in 687mm. Revisit only if a file with many scattered
+  small parts shows otherwise — one file is not a general result.
+- [x] **Lab page `lab/link.mjs`** draws the moves between cuts, which a toolpath
+  drawing normally omits. Greg's idea, and it is what settled the table above.
 
 ### 1.7 Tabs (holding tabs)
 jscut's are broken: `separateTabs` lives in a gitignored emscripten blob whose
@@ -424,6 +452,9 @@ retrofitted.
 - [ ] **Selection cycling**: `document.elementsFromPoint()` returns the hit stack in z-order; advance an index when the click is within ~3px of the previous one, wrap at the end. Blender behaviour, essentially free
 - [ ] Selected state: thicker stroke + dashed bounding box
 - [ ] Gizmos: translate, rotate, scale (uniform + per-axis), all emitting coalesced commands
+- [ ] **Travel-move layer** — render the lifts and rapids between cuts, not just
+  the cutting, so the effect of ordering is visible rather than argued about.
+  Greg's request; prototyped in `lab/link.mjs`. Toggleable, since it clutters.
 - [ ] **Heading knob** for open-path offset System A — draggable radial line + numeric angle field
 - [ ] **Tab dragging** along the path (constrained to arc length)
 - [ ] **0,0 puck** shown when the Project is selected; dragging it re-bases all emitted coordinates
