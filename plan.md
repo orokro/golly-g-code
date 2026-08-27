@@ -133,15 +133,15 @@ Consumed as `"vue-win-mgr": "file:../Vue-Window-Manager"` (npm symlinks it; `npm
 
 **Rules this forces on Phase 1 (do not skip):**
 
-- [ ] **Pocket passes must be computed from the ORIGINAL boundary, not chained.**
+- [x] **Pocket passes must be computed from the ORIGINAL boundary, not chained.**
   Measured drift over 100 passes: 2710 nm chained vs 10 nm from-original.
-- [ ] **Normalise imported SVG with a union before offsetting.** Self-intersecting
+- [x] **Normalise imported SVG with a union before offsetting.** Self-intersecting
   input offsets into spurious slivers (measured: 3 paths instead of 1).
-- [ ] **Guard degenerate input.** clipper2-ts does not validate; empty paths and a
+- [x] **Guard degenerate input.** clipper2-ts does not validate; empty paths and a
   1-point path with `EndType.Polygon` throw raw `TypeError`s.
-- [ ] **Round arcs are inscribed, never circumscribed** -- an outward offset comes
+- [x] **Round arcs are inscribed, never circumscribed** -- an outward offset comes
   out marginally undersized. Offset by `radius + tolerance` where clearance matters.
-- [ ] **No coordinate-range exception is thrown.** Above 2^53 you get silent
+- [x] **No coordinate-range exception is thrown.** Above 2^53 you get silent
   precision loss, not an error. Validate input extents ourselves.
 
 ---
@@ -188,9 +188,9 @@ complaint. It also ignores `viewBox` entirely.
 - [x] Tests: flattening error bounds asserted numerically; point counts sane
 
 ### 1.3 Geometry layer
-- [ ] Clipper wrapper: `offset`, `union`, `intersect`, `difference`, `xor`, `simplify`
-- [ ] Integer scale + round-trip precision tests (offset by +d then −d returns within tolerance)
-- [ ] Arc tolerance as a real deviation parameter, not a magic constant
+- [x] Clipper wrapper: `offset`, `union`, `intersect`, `difference`, `xor`, `simplify`
+- [x] Integer scale + round-trip precision tests (offset by +d then −d returns within tolerance)
+- [x] Arc tolerance as a real deviation parameter, not a magic constant
 
 ### 1.4 Closed-path operations
 - [ ] **Outside** — offset outward by tool radius (+ margin)
