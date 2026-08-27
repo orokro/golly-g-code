@@ -2,15 +2,48 @@
  * @file vitest.config.js
  * @description Test runner configuration.
  *
- * Only `src/core` is covered here, and deliberately so: the CAM core is
- * framework-free and DOM-free, which means it runs headlessly in Node with no
- * environment shimming. That property is enforced by lint rules (see
- * eslint.config.js), not just by convention.
+ * `src/core` is framework-free and DOM-free, so it runs headlessly in Node with
+ * no environment shimming. That property is enforced by lint rules (see
+ * eslint.config.js), not just by convention. Tests that DO need a DOM opt in per
+ * file with an `@vitest-environment jsdom` docblock.
+ *
+ * ---------------------------------------------------------------------------
+ * The `resolve.dedupe` entry below is load-bearing, and its absence produces a
+ * spectacularly unhelpful failure. `vue-win-mgr` is consumed as a `file:`
+ * dependency, and its own node_modules contains the Vue it auto-installed as a
+ * peer -- an older one than ours. Resolving the linked package from its real
+ * location therefore picks up that second Vue.
+ *
+ * Two Vue runtimes in one process means template refs never populate, so the
+ * window manager's container ref is null and it dies with
+ * `Cannot read properties of null (reading 'offsetWidth')` deep inside
+ * fitWindows -- nothing in that message points at the actual cause.
+ *
+ * vite.config.js carries the same dedupe for the app build. If you add a third
+ * config, it needs it too.
+ * ---------------------------------------------------------------------------
  */
 
+import Path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+/** Absolute path to the project root (this file's directory). */
+const rootDir = Path.dirname(fileURLToPath(import.meta.url));
+
 export default defineConfig({
+
+	resolve: {
+
+		// see the file header -- without this, a second Vue breaks provide/inject
+		dedupe: ['vue'],
+
+		alias: {
+			'@': Path.join(rootDir, 'src', 'renderer'),
+			'@core': Path.join(rootDir, 'src', 'core'),
+		},
+	},
+
 	test: {
 		environment: 'node',
 		include: ['src/core/**/*.test.js', 'tests/**/*.test.js'],
