@@ -73,11 +73,12 @@ const bboxOf = (sets) => {
  *   drawn in order; `sets` is an ARRAY of polylines, because a one-sided offset
  *   is often several disjoint pieces
  * @param {Object} box - bounds shared by every panel, so they are all at one scale
+ * @param {Number} [padding] - margin round the box, millimetres
  * @returns {String} a `<figure>` element
  */
-function panel(title, note, layers, box) {
+function panel(title, note, layers, box, padding) {
 
-	const pad = OFFSET * 3 + 2;
+	const pad = padding === undefined ? (OFFSET * 3 + 2) : padding;
 	const view = [box.minX - pad, box.minY - pad,
 		(box.maxX - box.minX) + (pad * 2), (box.maxY - box.minY) + (pad * 2)];
 	const hair = Math.max(view[2], view[3]) / 1100;
@@ -111,6 +112,57 @@ const SOURCE = '#5ec8d8';
 const RAW = '#e0798f';
 const CLEAN = '#7ee081';
 const HEAD = '#c792ea';
+const FRAGMENT = '#e8b64c';
+
+/** A piece shorter than the tool's own diameter cannot cut anything the plunge has not. */
+const isFragment = (piece) => lengthOf(piece) < OFFSET * 2;
+
+/**
+ * Zoomed panels for the pieces too small to read at document scale.
+ *
+ * These sit at near-180° reversals in the source -- a step with a tiny backward
+ * jog in it, or a spur the path walks back down. At a reversal the two sides
+ * SWAP in space: left of the outbound leg and left of the return leg are on
+ * opposite sides of the line. So a fragment of "side A" legitimately lands
+ * across the source from the rest of side A, which looks like a stray mark at
+ * document scale and is the tool wrapping the tip of the cusp.
+ *
+ * @param {Array<Array<Number[]>>} pieces - one side's pieces
+ * @param {Array<Number[]>} points - the source path
+ * @param {Array<Number[]>} outline - the full swept outline, for context
+ * @param {String} side - label for the side these came from
+ * @returns {String} zero or more `<figure>` elements
+ */
+function fragmentPanels(pieces, points, outline, side) {
+
+	return pieces.filter(isFragment).slice(0, 3).map((piece) => {
+
+		const centreX = (Math.min(...piece.map((q) => q[0])) + Math.max(...piece.map((q) => q[0]))) / 2;
+		const centreY = (Math.min(...piece.map((q) => q[1])) + Math.max(...piece.map((q) => q[1]))) / 2;
+
+		// a square window a few tool-widths across, centred on the fragment, so
+		// the cusp it belongs to is in frame at a readable size
+		const half = OFFSET * 2.2;
+		const box = {
+			minX: centreX - half, maxX: centreX + half,
+			minY: centreY - half, maxY: centreY + half,
+		};
+
+		return panel(
+			`Fragment — side ${side}, ${lengthOf(piece).toFixed(2)} mm`,
+			'Amber is the fragment, green the rest of this side, pink the tool\'s swept edge. '
+			+ 'The source doubles back here, and the two sides swap across a reversal.',
+			[
+				{ sets: [[...outline, outline[0]]], colour: RAW, width: 3 },
+				{ sets: [points], colour: SOURCE, width: 4, dash: true },
+				{ sets: pieces.filter((other) => other !== piece), colour: CLEAN, width: 4 },
+				{ sets: [piece], colour: FRAGMENT, width: 7, ends: true },
+			],
+			box,
+			0,
+		);
+	}).join('');
+}
 
 const sections = [];
 const timings = [];
@@ -140,8 +192,10 @@ for (const { label, points } of openPaths) {
 	 */
 	const coverage = (sets) => {
 		const total = sets.reduce((sum, piece) => sum + lengthOf(piece), 0);
-		return `${sets.length} piece${sets.length === 1 ? '' : 's'}, `
-			+ `${total.toFixed(0)} mm of cut against a ${sourceLength.toFixed(0)} mm source`;
+		const scraps = sets.filter(isFragment).length;
+		return `${sets.length} piece${sets.length === 1 ? '' : 's'}`
+			+ (scraps > 0 ? ` (${scraps} shorter than the tool)` : '')
+			+ `, ${total.toFixed(0)} mm of cut against a ${sourceLength.toFixed(0)} mm source`;
 	};
 
 	const sourceLength = lengthOf(points);
@@ -154,15 +208,19 @@ ${panel('Heading offset', `Whole path moved ${(OFFSET * 4).toFixed(1)} mm at 90�
 ${panel('Swept area', `Everything a ${(OFFSET * 2).toFixed(3)} mm tool would touch following this line. Both sides at once.`,
 	[{ sets: [[...outline, outline[0]]], colour: RAW, width: 1.8 },
 		{ sets: [points], colour: SOURCE, width: 1.2, dash: true }], box)}
-${panel('Normal offset — side A', `${coverage(left)}. Rings mark where the tool lifts between pieces.`,
+${panel('Normal offset — side A', `${coverage(left)}. Rings mark where the tool lifts between pieces; amber is shorter than the tool is wide.`,
 	[{ sets: [points], colour: SOURCE, width: 1.4, dash: true },
-		{ sets: left, colour: CLEAN, width: 2.2, ends: true }], box)}
+		{ sets: left.filter((piece) => !isFragment(piece)), colour: CLEAN, width: 2.2, ends: true },
+		{ sets: left.filter(isFragment), colour: FRAGMENT, width: 2.2, ends: true }], box)}
 ${panel('Normal offset — side B', `${coverage(right)}. The other side of the same line.`,
 	[{ sets: [points], colour: SOURCE, width: 1.4, dash: true },
-		{ sets: right, colour: CLEAN, width: 2.2, ends: true }], box)}
+		{ sets: right.filter((piece) => !isFragment(piece)), colour: CLEAN, width: 2.2, ends: true },
+		{ sets: right.filter(isFragment), colour: FRAGMENT, width: 2.2, ends: true }], box)}
 ${panel('Both sides', 'Side A and side B together, with the source between them.',
 	[{ sets: left, colour: CLEAN, width: 1.8 }, { sets: right, colour: HEAD, width: 1.8 },
 		{ sets: [points], colour: SOURCE, width: 1.2, dash: true }], box)}
+${fragmentPanels(left, points, outline, 'A')}
+${fragmentPanels(right, points, outline, 'B')}
 </div>`);
 }
 
