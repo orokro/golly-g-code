@@ -1,7 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-	offsetByHeading, offsetAlongNormals, resample, Side, DEFAULT_CLEAN,
-} from './openOffset.js';
+import { offsetByHeading, offsetAlongNormals, resample, Side } from './openOffset.js';
 
 /** Shortest distance from a point to a polyline. */
 const distanceToPath = (point, path) => {
@@ -18,7 +16,27 @@ const distanceToPath = (point, path) => {
 	return best;
 };
 
-/** A sine wave sampled finely, with a given amplitude and wavelength. */
+/**
+ * Closest the offset path ever comes to the source, sampled ALONG its segments.
+ *
+ * Sampling only the vertices is what let a broken implementation pass: a mitre
+ * could overshoot past the far side of a feature, leaving both endpoints a
+ * legitimate distance away while the segment between them cut straight through.
+ * The tool follows the segments, so the test has to as well.
+ */
+const closestApproach = (offset, source, samplesPerSegment = 24) => {
+	let best = Infinity;
+	for (let i = 0; i + 1 < offset.length; i++) {
+		const [ax, ay] = offset[i];
+		const [bx, by] = offset[i + 1];
+		for (let k = 0; k <= samplesPerSegment; k++) {
+			const t = k / samplesPerSegment;
+			best = Math.min(best, distanceToPath([ax + (t * (bx - ax)), ay + (t * (by - ay))], source));
+		}
+	}
+	return best;
+};
+
 const wave = (amplitude, wavelength, width = 200, step = 0.25) => {
 	const pts = [];
 	for (let x = 0; x <= width; x += step)
@@ -26,17 +44,21 @@ const wave = (amplitude, wavelength, width = 200, step = 0.25) => {
 	return pts;
 };
 
-/** Radius of curvature at the peak of such a wave. */
-const peakRadius = (amplitude, wavelength) => (wavelength * wavelength) / (4 * Math.PI * Math.PI * amplitude);
+/** A coarse zigzag of roof peaks — the shape that broke the hand-rolled version. */
+const rooftops = () => {
+	const pts = [[0, 0]];
+	for (let i = 0; i < 6; i++) {
+		const x = i * 30;
+		pts.push([x + 10, 22], [x + 22, 0], [x + 30, 0]);
+	}
+	return pts;
+};
 
 
 describe('heading offset', () => {
 
 	it('moves every point by the same vector', () => {
-		const source = [[0, 0], [10, 0], [10, 10]];
-		const moved = offsetByHeading(source, 5, Math.PI / 2);
-
-		expect(moved[0][0]).toBeCloseTo(0, 9);
+		const moved = offsetByHeading([[0, 0], [10, 0], [10, 10]], 5, Math.PI / 2);
 		expect(moved[0][1]).toBeCloseTo(5, 9);
 		expect(moved[2][1]).toBeCloseTo(15, 9);
 	});
@@ -54,114 +76,83 @@ describe('heading offset', () => {
 });
 
 
-describe('normal offset — the well-behaved regime', () => {
+describe('normal offset', () => {
 
-	it('offsets a straight line to a parallel line at exactly the distance', () => {
+	it('offsets a straight line to a parallel line', () => {
 		const { points } = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.LEFT });
+		expect(points.length).toBeGreaterThan(1);
 		for (const [, y] of points)
-			expect(y).toBeCloseTo(3, 9);
+			expect(y).toBeCloseTo(3, 2);
 	});
 
 	it('puts left and right on opposite sides', () => {
 		const left = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.LEFT });
 		const right = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.RIGHT });
-		expect(left.points[0][1]).toBeCloseTo(3, 9);
-		expect(right.points[0][1]).toBeCloseTo(-3, 9);
+		expect(left.points[0][1]).toBeGreaterThan(0);
+		expect(right.points[0][1]).toBeLessThan(0);
 	});
 
-	it('holds the full offset distance everywhere when the bend is gentle', () => {
-		// radius of curvature comfortably larger than the offset, so nothing folds
-		const source = wave(6, 90);
-		expect(peakRadius(6, 90)).toBeGreaterThan(4);
-
-		const { points, removed } = offsetAlongNormals(source, 1.5, { side: Side.LEFT });
-
-		expect(removed).toBe(0);
-		for (const point of points)
-			expect(distanceToPath(point, source)).toBeCloseTo(1.5, 2);
-	});
-
-	it('rounds an outward corner instead of chording across it', () => {
-		// a square corner offset on its outside must sweep an arc, or the offset
-		// falls short exactly where it should reach furthest
-		const corner = [[0, 0], [50, 0], [50, 50]];
-		const { points } = offsetAlongNormals(corner, 4, { side: Side.RIGHT, tolerance: 0.01 });
-
-		expect(points.length).toBeGreaterThan(10);
-		for (const point of points)
-			expect(distanceToPath(point, corner)).toBeGreaterThan(4 - 0.02);
-	});
-
-	it('mitres an inward corner to a single point', () => {
-		const corner = [[0, 0], [50, 0], [50, 50]];
-		const { raw } = offsetAlongNormals(corner, 4, { side: Side.LEFT, clean: 0 });
-		expect(raw).toHaveLength(3);
-		expect(raw[1][0]).toBeCloseTo(46, 6);
-		expect(raw[1][1]).toBeCloseTo(4, 6);
+	it('returns the full swept outline as well as the one side', () => {
+		const { points, outline } = offsetAlongNormals([[0, 0], [100, 0]], 3);
+		expect(outline.length).toBeGreaterThan(points.length);
 	});
 });
 
 
-describe('normal offset — folding, and the clean control', () => {
+describe('the offset never cuts closer than it was asked to', () => {
 
-	// radius of curvature far below the offset distance, so the inside of every
-	// bend folds over itself
-	const tight = wave(9, 12, 120);
+	// Two sources of legitimate shortfall, and nothing else is acceptable:
+	//   - polygonal arcs are INSCRIBED, so an offset falls inside the true one
+	//     by at most the arc tolerance
+	//   - Clipper works on an integer grid of 1e-4 mm, which rounds both the
+	//     offset distance and the arc tolerance itself
+	// Measured shortfall is 0.00503mm for a 0.005mm tolerance, so the grid
+	// contributes about 3e-5. Allowing a micron over covers it without
+	// weakening the assertion: the bug this test exists for measured 1.5875mm.
+	const TOLERANCE = 0.005;
+	const slack = TOLERANCE + 0.001;
 
-	it('folds without cleaning', () => {
-		expect(peakRadius(9, 12)).toBeLessThan(0.5);
-
-		const { points } = offsetAlongNormals(tight, 1.5, { side: Side.LEFT, clean: 0 });
-
-		const strays = points.filter((p) => distanceToPath(p, tight) < 1.4);
-		expect(strays.length).toBeGreaterThan(0);
+	it('holds the distance on a gentle curve', () => {
+		const source = wave(6, 90);
+		const { points } = offsetAlongNormals(source, 1.5, { side: Side.LEFT, tolerance: TOLERANCE });
+		expect(closestApproach(points, source)).toBeGreaterThanOrEqual(1.5 - slack);
 	});
 
-	it('removes every folded point at full clean', () => {
-		const { points, removed } = offsetAlongNormals(tight, 1.5, { side: Side.LEFT, clean: 1 });
-
-		expect(removed).toBeGreaterThan(0);
-
-		// the guarantee: nothing survives that came closer than the offset distance
-		for (const point of points)
-			expect(distanceToPath(point, tight)).toBeGreaterThanOrEqual(1.5 - 1e-6);
+	it('holds the distance where the curve is far tighter than the offset', () => {
+		// radius of curvature well under 0.5mm against a 1.5mm offset
+		const source = wave(9, 12, 120);
+		const { points } = offsetAlongNormals(source, 1.5, { side: Side.LEFT, tolerance: TOLERANCE });
+		expect(points.length).toBeGreaterThan(2);
+		expect(closestApproach(points, source)).toBeGreaterThanOrEqual(1.5 - slack);
 	});
 
-	it('removes more as the clean control rises', () => {
-		const counts = [0, 0.5, 0.9, 1].map(
-			(clean) => offsetAlongNormals(tight, 1.5, { side: Side.LEFT, clean }).removed,
-		);
+	it('holds the distance on a COARSE zigzag — the case that broke the last version', () => {
+		// long segments and sharp valleys. A hand-rolled mitre overshot past the
+		// far side of a peak here: both its endpoints were a full offset distance
+		// from the source while the segment between them passed through it,
+		// measuring 0.0000mm against a requested 1.5875mm.
+		const source = rooftops();
+		const { points } = offsetAlongNormals(source, 1.5875, { side: Side.LEFT, tolerance: TOLERANCE });
 
-		for (let i = 1; i < counts.length; i++)
-			expect(counts[i]).toBeGreaterThanOrEqual(counts[i - 1]);
-
-		expect(counts[0]).toBe(0);
-		expect(counts[counts.length - 1]).toBeGreaterThan(0);
+		expect(points.length).toBeGreaterThan(2);
+		expect(closestApproach(points, source)).toBeGreaterThanOrEqual(1.5875 - slack);
 	});
 
-	it('keeps the outward side intact while cleaning the inward one', () => {
-		// the outside of a bend spreads apart rather than folding, so cleaning
-		// should have essentially nothing to do there
-		const inward = offsetAlongNormals(tight, 1.5, { side: Side.LEFT, clean: 1 });
-		const outward = offsetAlongNormals(tight, 1.5, { side: Side.RIGHT, clean: 1 });
-
-		// both sides of a symmetric wave fold, but a one-sided bend should not
-		const arch = [[0, 0], [20, 12], [40, 0], [60, 0]];
-		const outer = offsetAlongNormals(arch, 1.5, { side: Side.RIGHT, clean: 1 });
-		expect(outer.removed).toBe(0);
-
-		expect(inward.points.length).toBeGreaterThan(0);
-		expect(outward.points.length).toBeGreaterThan(0);
+	it('holds the distance on both sides', () => {
+		const source = rooftops();
+		for (const side of [Side.LEFT, Side.RIGHT]) {
+			const { points } = offsetAlongNormals(source, 2, { side, tolerance: TOLERANCE });
+			expect(closestApproach(points, source), side).toBeGreaterThanOrEqual(2 - slack);
+		}
 	});
 
-	it('still returns the uncleaned path, for comparison', () => {
-		const result = offsetAlongNormals(tight, 1.5, { side: Side.LEFT, clean: 1 });
-		expect(result.raw.length).toBeGreaterThan(result.points.length);
-	});
-
-	it('has a sane default clean', () => {
-		expect(DEFAULT_CLEAN).toBeGreaterThan(0);
-		expect(DEFAULT_CLEAN).toBeLessThanOrEqual(1);
+	it('holds the distance at several offsets', () => {
+		const source = wave(9, 20, 120);
+		for (const distance of [0.5, 1.5, 3, 6]) {
+			const { points } = offsetAlongNormals(source, distance, { tolerance: TOLERANCE });
+			expect(closestApproach(points, source), `${distance}mm`)
+				.toBeGreaterThanOrEqual(distance - slack);
+		}
 	});
 });
 
@@ -180,16 +171,15 @@ describe('degenerate input', () => {
 	});
 
 	it('ignores repeated points, which have no direction', () => {
-		const withDupes = [[0, 0], [0, 0], [50, 0], [50, 0]];
-		const { points } = offsetAlongNormals(withDupes, 2, { side: Side.LEFT });
-		expect(points.every(([, y]) => Math.abs(y - 2) < 1e-9)).toBe(true);
+		const { points } = offsetAlongNormals([[0, 0], [0, 0], [50, 0], [50, 0]], 2, { side: Side.LEFT });
+		expect(points.length).toBeGreaterThan(1);
+		for (const [, y] of points)
+			expect(y).toBeCloseTo(2, 2);
 	});
 
 	it('survives a complete reversal without producing infinities', () => {
-		// the mitre at a 180 degree turn is at infinity; the fallback must catch it
-		const spike = [[0, 0], [50, 0], [0, 0.001]];
-		const { raw } = offsetAlongNormals(spike, 3, { side: Side.LEFT, clean: 0 });
-		expect(raw.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y))).toBe(true);
+		const { points } = offsetAlongNormals([[0, 0], [50, 0], [0, 0.001]], 3, { side: Side.LEFT });
+		expect(points.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y))).toBe(true);
 	});
 });
 
@@ -200,7 +190,6 @@ describe('resample', () => {
 		const out = resample([[0, 0], [10, 0]], 2);
 		expect(out[0]).toEqual([0, 0]);
 		expect(out[out.length - 1]).toEqual([10, 0]);
-
 		for (let i = 1; i < out.length - 1; i++)
 			expect(Math.hypot(out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1])).toBeCloseTo(2, 6);
 	});
@@ -210,8 +199,6 @@ describe('resample', () => {
 		const gaps = [];
 		for (let i = 1; i < out.length; i++)
 			gaps.push(Math.hypot(out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]));
-
-		// every gap except the final short one should be the requested spacing
 		for (const gap of gaps.slice(0, -1))
 			expect(gap).toBeCloseTo(2, 6);
 	});

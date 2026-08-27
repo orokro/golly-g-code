@@ -8,39 +8,42 @@
  * into "cut out this zero-area sliver". Two operations replace them:
  *
  * **Heading offset** displaces the whole path a fixed distance along a fixed
- * angle. Rigid, trivially predictable, and what you want when you are shifting a
- * cut sideways to account for something physical.
+ * angle. Rigid, shape-preserving, and incapable of folding.
  *
- * **Path-normal offset** displaces every point along the local normal, so the
- * result follows the shape. This is the interesting one, and the messy one: on
- * the inside of a bend the offset folds over itself, and on the outside it
- * spreads apart. Both have to be dealt with.
+ * **Normal offset** displaces the path along its local normal, so the result
+ * follows the shape.
  *
- * ## How the mess is handled
+ * ## Why the normal offset goes through Clipper
  *
- * Outward bends get an **arc**, exactly as a round join does on a closed offset,
- * with its angular step derived from the sagitta so the deviation is bounded
- * rather than guessed. Without this, a corner is chorded across and the offset
- * comes out short precisely where it should be furthest out.
+ * The first implementation built it by hand: arcs on outward bends, mitres on
+ * inward ones, then a filter that discarded any point which had folded over
+ * (a folded point ends up closer to the source than the offset distance).
  *
- * Inward bends get a **mitre**, which on a tight bend deliberately overshoots
- * and crosses the neighbouring geometry. Those crossings are then removed by a
- * single observation: a point that folded over ends up CLOSER to the source path
- * than the offset distance. Filtering on that removes every self-intersection
- * loop without needing to find the intersections at all, and the threshold is
- * exactly what the "clean" control adjusts.
+ * It passed every test, including a property test asserting that no surviving
+ * point was nearer the source than the offset distance — and it was still
+ * wrong, because the filter examined POINTS and the tool follows SEGMENTS.
+ * On a coarse zigzag (a 25-point skyline, segments 5–27mm long) a mitre at a
+ * sharp valley overshot past the far side of a roof. Both of its endpoints sat
+ * a legitimate full offset distance away, so the filter kept them, while the
+ * segment joining them passed straight through the source line. Measured
+ * closest approach: 0.0000mm against a requested 1.5875mm.
+ *
+ * Clipper's open-path inflate is a true Minkowski offset, so it cannot produce
+ * that: measured on the same path it holds 1.5824mm, the 0.005mm shortfall
+ * being exactly the arc tolerance, since polygonal arcs are inscribed.
+ *
+ * So the offset itself is Clipper's. What remains here is extracting one side
+ * of the closed outline it returns, which is the part Clipper does not do.
+ *
+ * There is no "clean" control any more, and there should not be. The correct
+ * offset is exact, not a matter of taste — anything short of it is geometry
+ * that cuts where it should not.
  */
 
-import { arcAngularStep } from '../path/arc.js';
+import { offsetOpen, OpenEnd } from '../geometry/clipper.js';
 
-/** Default fraction of the offset distance a point must keep from the source. */
-export const DEFAULT_CLEAN = 0.9;
-
-/** Default arc tolerance for outward bends, in millimetres. */
-export const DEFAULT_TOLERANCE = 0.01;
-
-/** How far a mitre may reach, as a multiple of the offset distance. */
-const MITRE_LIMIT = 10;
+/** Default arc tolerance for the offset outline, in millimetres. */
+export const DEFAULT_TOLERANCE = 0.005;
 
 /** Which side of the path to offset towards. */
 export const Side = Object.freeze({ LEFT: 'left', RIGHT: 'right' });
@@ -88,140 +91,95 @@ function dedupe(points, epsilon = 1e-9) {
 
 
 /**
- * Unit left-hand normals for each segment of a path.
+ * Where a point sits relative to one segment: how far, and on which side.
  *
- * In our y-up space the left normal of a direction (dx, dy) is (-dy, dx).
- *
- * @param {Array<Number[]>} points - the path
- * @returns {Array<Number[]>} one normal per segment, so one fewer than points
- */
-function segmentNormals(points) {
-
-	const normals = [];
-
-	for (let i = 0; i + 1 < points.length; i++) {
-
-		const dx = points[i + 1][0] - points[i][0];
-		const dy = points[i + 1][1] - points[i][1];
-		const length = Math.hypot(dx, dy);
-
-		normals.push(length === 0 ? [0, 0] : [-dy / length, dx / length]);
-	}
-
-	return normals;
-}
-
-
-/**
- * Intersects two lines given as a point and a direction each.
- *
- * @param {Number[]} p - a point on the first line
- * @param {Number[]} r - direction of the first line
- * @param {Number[]} q - a point on the second line
- * @param {Number[]} s - direction of the second line
- * @returns {Number[]|null} the intersection, or null if effectively parallel
- */
-function intersectLines(p, r, q, s) {
-
-	const denominator = (r[0] * s[1]) - (r[1] * s[0]);
-
-	if (Math.abs(denominator) < 1e-12)
-		return null;
-
-	const t = (((q[0] - p[0]) * s[1]) - ((q[1] - p[1]) * s[0])) / denominator;
-
-	return [p[0] + (t * r[0]), p[1] + (t * r[1])];
-}
-
-
-/**
- * Shortest distance from a point to a line segment.
- *
- * @param {Number[]} point - the point
+ * @param {Number[]} point - the query point
  * @param {Number[]} a - segment start
  * @param {Number[]} b - segment end
- * @returns {Number} the distance
+ * @returns {Object} `{ distance, cross }`; cross is positive to the left of a→b
  */
-function distanceToSegment(point, a, b) {
+function classifyAgainstSegment(point, a, b) {
 
 	const vx = b[0] - a[0];
 	const vy = b[1] - a[1];
 	const lengthSquared = (vx * vx) + (vy * vy);
 
 	if (lengthSquared === 0)
-		return Math.hypot(point[0] - a[0], point[1] - a[1]);
+		return { distance: Math.hypot(point[0] - a[0], point[1] - a[1]), cross: 0 };
 
 	let t = (((point[0] - a[0]) * vx) + ((point[1] - a[1]) * vy)) / lengthSquared;
 	t = Math.max(0, Math.min(1, t));
 
-	return Math.hypot(point[0] - (a[0] + (t * vx)), point[1] - (a[1] + (t * vy)));
+	const nx = a[0] + (t * vx);
+	const ny = a[1] + (t * vy);
+
+	return {
+		distance: Math.hypot(point[0] - nx, point[1] - ny),
+		cross: (vx * (point[1] - ny)) - (vy * (point[0] - nx)),
+	};
 }
 
 
 /**
- * Builds a uniform grid over a path's segments, for fast distance queries.
+ * Indexes a path's segments in a uniform grid, for fast nearest-segment queries.
  *
- * The fold filter asks "how far is this point from the source path" once per
- * offset point, which is quadratic if answered by scanning every segment. A path
- * of a few thousand points makes that millions of comparisons per redraw, and
- * this runs while somebody drags a slider.
+ * Classifying every point of the offset outline against every segment of the
+ * source is quadratic. On a 1200-point path that was 400ms for one offset, and
+ * this runs while somebody drags a slider — so the grid is not an optimisation
+ * so much as the difference between interactive and not.
  *
- * @param {Array<Number[]>} points - the source path
+ * @param {Array<Number[]>} path - the source path
  * @param {Number} cellSize - grid cell size in millimetres
- * @returns {Object} an index exposing `distanceTo(point)`
+ * @returns {Object} an index exposing `classify(point)`
  */
-function buildSegmentIndex(points, cellSize) {
+function buildSegmentIndex(path, cellSize) {
 
 	const cells = new Map();
 	const key = (cx, cy) => `${cx},${cy}`;
 
-	const add = (cx, cy, index) => {
-		const k = key(cx, cy);
-		const bucket = cells.get(k);
-		if (bucket === undefined)
-			cells.set(k, [index]);
-		else
-			bucket.push(index);
-	};
+	for (let i = 0; i + 1 < path.length; i++) {
 
-	for (let i = 0; i + 1 < points.length; i++) {
+		const [ax, ay] = path[i];
+		const [bx, by] = path[i + 1];
 
-		const [ax, ay] = points[i];
-		const [bx, by] = points[i + 1];
-
-		// register the segment in every cell its bounding box touches
 		const minX = Math.floor(Math.min(ax, bx) / cellSize);
 		const maxX = Math.floor(Math.max(ax, bx) / cellSize);
 		const minY = Math.floor(Math.min(ay, by) / cellSize);
 		const maxY = Math.floor(Math.max(ay, by) / cellSize);
 
-		for (let cx = minX; cx <= maxX; cx++)
-			for (let cy = minY; cy <= maxY; cy++)
-				add(cx, cy, i);
+		for (let cx = minX; cx <= maxX; cx++) {
+			for (let cy = minY; cy <= maxY; cy++) {
+				const k = key(cx, cy);
+				const bucket = cells.get(k);
+				if (bucket === undefined)
+					cells.set(k, [i]);
+				else
+					bucket.push(i);
+			}
+		}
 	}
 
 	return {
 
 		/**
-		 * Distance from a point to the nearest segment of the source path.
+		 * Distance and side for the nearest segment of the source.
 		 *
-		 * Searches outward one ring of cells at a time and stops as soon as the
-		 * nearest hit so far cannot be beaten by anything further out.
+		 * Searches outward one ring of cells at a time, stopping as soon as
+		 * nothing further out could beat the best hit so far.
 		 *
 		 * @param {Number[]} point - the query point
-		 * @returns {Number} the distance
+		 * @returns {Object} `{ distance, cross }`
 		 */
-		distanceTo(point) {
+		classify(point) {
 
 			const cx = Math.floor(point[0] / cellSize);
 			const cy = Math.floor(point[1] / cellSize);
 
-			let best = Infinity;
+			let best = { distance: Infinity, cross: 0 };
 
 			for (let ring = 0; ring < 64; ring++) {
 
-				// anything beyond this ring is at least this far away
-				if (best <= (ring - 1) * cellSize)
+				if (best.distance <= (ring - 1) * cellSize)
 					break;
 
 				for (let x = cx - ring; x <= cx + ring; x++) {
@@ -235,8 +193,11 @@ function buildSegmentIndex(points, cellSize) {
 						if (bucket === undefined)
 							continue;
 
-						for (const i of bucket)
-							best = Math.min(best, distanceToSegment(point, points[i], points[i + 1]));
+						for (const i of bucket) {
+							const found = classifyAgainstSegment(point, path[i], path[i + 1]);
+							if (found.distance < best.distance)
+								best = found;
+						}
 					}
 				}
 			}
@@ -248,27 +209,90 @@ function buildSegmentIndex(points, cellSize) {
 
 
 /**
- * Offsets an open path along its own normals.
+ * Takes the longest run of consecutive entries satisfying a predicate.
+ *
+ * The outline is a closed loop, so a run may wrap past its end. Doubling the
+ * index range is the cheap way to let it.
+ *
+ * @param {Array} items - the loop
+ * @param {Function} predicate - called with each item
+ * @returns {Array} the longest satisfying run, in order
+ */
+function longestRun(items, predicate) {
+
+	const count = items.length;
+	const flags = items.map((item) => predicate(item) === true);
+
+	if (flags.every((f) => f === true))
+		return [...items];
+
+	let best = [];
+	let current = [];
+
+	for (let i = 0; i < count * 2; i++) {
+
+		if (flags[i % count] === true) {
+			current.push(items[i % count]);
+			if (current.length > best.length)
+				best = [...current];
+			if (current.length >= count)
+				break;
+		} else {
+			current = [];
+		}
+	}
+
+	return best;
+}
+
+
+/**
+ * Offsets an open path along its normals, to one side.
+ *
+ * Delegates the offset itself to Clipper — see the file header for why — and
+ * then keeps the portion of the resulting closed outline that lies on the
+ * requested side of the source.
  *
  * @param {Array<Number[]>} points - the source path, in millimetres
  * @param {Number} distance - offset distance; must be positive
  * @param {Object} [options] - options
  * @param {String} [options.side=Side.LEFT] - which side to offset towards
- * @param {Number} [options.clean=DEFAULT_CLEAN] - 0 leaves every self-intersection
- *   in place; 1 removes any point that came closer to the source than the full
- *   offset distance. Values in between trade tidiness for fidelity.
- * @param {Number} [options.tolerance=DEFAULT_TOLERANCE] - arc tolerance on outward bends
- * @returns {Object} `{ points, removed, raw }` — the cleaned path, how many points
- *   the fold filter discarded, and the uncleaned path for comparison
+ * @param {Number} [options.tolerance=DEFAULT_TOLERANCE] - arc tolerance, millimetres
+ * @returns {Object} `{ points, outline }` — the one-sided offset, and the full
+ *   closed outline it was taken from, which is useful for showing the tool's
+ *   whole swept area
  * @throws {RangeError} when the distance is not positive
  */
 export function offsetAlongNormals(points, distance, options = {}) {
 
-	const {
-		side = Side.LEFT,
-		clean = DEFAULT_CLEAN,
-		tolerance = DEFAULT_TOLERANCE,
-	} = options;
+	const { side = Side.LEFT } = options;
+	const both = offsetBothSides(points, distance, options);
+
+	return {
+		points: side === Side.RIGHT ? both.right : both.left,
+		outline: both.outline,
+	};
+}
+
+
+/**
+ * Offsets an open path to BOTH sides at once.
+ *
+ * Both sides come out of the same closed outline, so asking for them together
+ * costs one Clipper call and one spatial index rather than two of each. On a
+ * 1200-point path that is the difference between 165ms and 80ms, which matters
+ * because this runs behind a slider.
+ *
+ * @param {Array<Number[]>} points - the source path, in millimetres
+ * @param {Number} distance - offset distance; must be positive
+ * @param {Object} [options] - options
+ * @param {Number} [options.tolerance=DEFAULT_TOLERANCE] - arc tolerance, millimetres
+ * @returns {Object} `{ left, right, outline }`
+ * @throws {RangeError} when the distance is not positive
+ */
+export function offsetBothSides(points, distance, options = {}) {
+
+	const { tolerance = DEFAULT_TOLERANCE } = options;
 
 	if (!(distance > 0))
 		throw new RangeError(`offsetAlongNormals needs a positive distance, got ${distance}`);
@@ -276,105 +300,43 @@ export function offsetAlongNormals(points, distance, options = {}) {
 	const source = dedupe(points);
 
 	if (source.length < 2)
-		return { points: [], removed: 0, raw: [] };
+		return { left: [], right: [], outline: [] };
 
-	// offsetting to the right is the same operation mirrored
-	const signed = side === Side.RIGHT ? -distance : distance;
+	// butt ends, so the offset starts and stops square across the path rather
+	// than wrapping round it -- a one-sided offset has nothing to wrap onto
+	const outlines = offsetOpen([source], distance, {
+		end: OpenEnd.BUTT,
+		toleranceMm: tolerance,
+	});
 
-	const normals = segmentNormals(source);
-	const step = arcAngularStep({ rx: distance, ry: distance }, tolerance);
+	if (outlines.length === 0)
+		return { left: [], right: [], outline: [] };
 
-	/** @type {Array<Number[]>} */
-	const raw = [];
+	// the largest outline encloses the path; any others are artefacts
+	const outline = outlines.reduce(
+		(largest, candidate) => (candidate.length > largest.length ? candidate : largest),
+	);
 
-	// first point: straight out along the first segment's normal
-	raw.push([
-		source[0][0] + (signed * normals[0][0]),
-		source[0][1] + (signed * normals[0][1]),
-	]);
-
-	for (let i = 1; i + 1 < source.length; i++) {
-
-		const previous = normals[i - 1];
-		const next = normals[i];
-
-		// which way the path turns here, and therefore whether the offset side is
-		// on the outside of the bend (spreads, wants an arc) or the inside (folds)
-		const cross = (source[i][0] - source[i - 1][0]) * (source[i + 1][1] - source[i][1])
-			- ((source[i][1] - source[i - 1][1]) * (source[i + 1][0] - source[i][0]));
-
-		const turningTowardOffset = signed > 0 ? cross > 0 : cross < 0;
-
-		if (turningTowardOffset === false && Math.abs(cross) > 1e-12) {
-
-			// outward bend: sweep an arc so the offset stays a full distance out
-			const startAngle = Math.atan2(previous[1], previous[0]);
-			let sweep = Math.atan2(next[1], next[0]) - startAngle;
-
-			while (sweep > Math.PI) sweep -= Math.PI * 2;
-			while (sweep < -Math.PI) sweep += Math.PI * 2;
-
-			const count = Math.max(1, Math.ceil(Math.abs(sweep) / step));
-
-			for (let k = 0; k <= count; k++) {
-				const angle = startAngle + (sweep * (k / count));
-				raw.push([
-					source[i][0] + (signed * Math.cos(angle)),
-					source[i][1] + (signed * Math.sin(angle)),
-				]);
-			}
-
-		} else {
-
-			// inward bend: mitre to the intersection of the two offset lines, and
-			// let the fold filter clear up whatever crosses
-			const a = [source[i - 1][0] + (signed * previous[0]), source[i - 1][1] + (signed * previous[1])];
-			const b = [source[i][0] + (signed * next[0]), source[i][1] + (signed * next[1])];
-
-			const dirA = [source[i][0] - source[i - 1][0], source[i][1] - source[i - 1][1]];
-			const dirB = [source[i + 1][0] - source[i][0], source[i + 1][1] - source[i][1]];
-
-			const hit = intersectLines(a, dirA, b, dirB);
-
-			const reach = hit === null
-				? Infinity
-				: Math.hypot(hit[0] - source[i][0], hit[1] - source[i][1]);
-
-			if (hit !== null && reach <= Math.abs(distance) * MITRE_LIMIT) {
-				raw.push(hit);
-			} else {
-				// a near-reversal sends the mitre to infinity; fall back to the
-				// averaged normal, which the filter will usually discard anyway
-				const mx = (previous[0] + next[0]) / 2;
-				const my = (previous[1] + next[1]) / 2;
-				const length = Math.hypot(mx, my) || 1;
-				raw.push([
-					source[i][0] + (signed * mx / length),
-					source[i][1] + (signed * my / length),
-				]);
-			}
-		}
-	}
-
-	// last point: straight out along the final segment's normal
-	const last = source.length - 1;
-	raw.push([
-		source[last][0] + (signed * normals[normals.length - 1][0]),
-		source[last][1] + (signed * normals[normals.length - 1][1]),
-	]);
-
-	if (clean <= 0)
-		return { points: raw, removed: 0, raw };
-
-	// A point that folded over sits closer to the source than the offset
-	// distance. That single fact removes every self-intersection loop without
-	// having to locate a single intersection.
-	const threshold = distance * Math.min(clean, 1);
 	const index = buildSegmentIndex(source, Math.max(distance, 1e-6));
 
-	const kept = raw.filter((point) => index.distanceTo(point) >= threshold - 1e-9);
+	// The outline is a closed loop, so it also contains the two end caps, which
+	// run square across the path from one side to the other. A cap's points are
+	// on both sides and at every distance from zero to the full offset, so a side
+	// test alone keeps part of one -- and at a large offset the cap is long,
+	// dragging the kept path in towards the source. Requiring the full offset
+	// distance as well trims the caps exactly where they leave the offset proper,
+	// and states the guarantee we actually want directly.
+	const minimumDistance = distance - tolerance - 0.001;
 
-	return { points: kept, removed: raw.length - kept.length, raw };
+	// classify once; both sides read the same answers
+	const classified = outline.map((point) => index.classify(point));
+
+	const keep = (wantLeft) => longestRun(
+		outline.map((point, i) => ({ point, at: classified[i] })),
+		({ at }) => at.distance >= minimumDistance && (wantLeft ? at.cross > 0 : at.cross < 0),
+	).map(({ point }) => point);
+
+	return { left: keep(true), right: keep(false), outline };
 }
 
 

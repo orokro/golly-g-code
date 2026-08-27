@@ -4,17 +4,18 @@
  *
  * Usage: node lab/open-offset.mjs <in.svg> [out.html] [offsetMm]
  *
- * The fold filter is the sort of thing that is easy to write, easy to test for
- * the property it guarantees, and still quietly wrong to look at. This puts the
- * raw offset and the cleaned one side by side on real artwork so the difference
- * is visible rather than inferred.
+ * An offset is the sort of thing that is easy to write, easy to test for the
+ * property you thought mattered, and still quietly wrong. The first version of
+ * this module passed a property test on every vertex while a segment between two
+ * of those vertices cut straight through the source. Looking at it on real
+ * artwork is what catches that class of mistake.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { importSvgDocument } from '../src/core/svg/document.js';
 import { flattenSubPath } from '../src/core/path/flatten.js';
-import { offsetAlongNormals, offsetByHeading, Side } from '../src/core/cam/openOffset.js';
+import { offsetBothSides, offsetByHeading } from '../src/core/cam/openOffset.js';
 
 const input = process.argv[2];
 const output = process.argv[3] ?? 'open-offset.html';
@@ -91,30 +92,31 @@ const timings = [];
 for (const { label, points } of openPaths) {
 
 	const t0 = performance.now();
-	const raw = offsetAlongNormals(points, OFFSET, { side: Side.LEFT, clean: 0 });
-	const cleaned = offsetAlongNormals(points, OFFSET, { side: Side.LEFT, clean: 1 });
-	const partial = offsetAlongNormals(points, OFFSET, { side: Side.LEFT, clean: 0.5 });
-	const other = offsetAlongNormals(points, OFFSET, { side: Side.RIGHT, clean: 1 });
+	const both = offsetBothSides(points, OFFSET);
 	const ms = performance.now() - t0;
 
-	timings.push(`${label}: ${points.length} pts, 4 offsets in ${ms.toFixed(1)} ms`);
+	const left = { points: both.left, outline: both.outline };
+	const right = { points: both.right };
+
+	timings.push(`${label}: ${points.length} pts, both sides in ${ms.toFixed(1)} ms`);
 
 	const heading = offsetByHeading(points, OFFSET * 4, Math.PI / 2);
-	const box = bboxOf([points, raw.points, other.points, heading]);
+	const box = bboxOf([points, left.outline, heading]);
 
 	sections.push(`<h2>${label} <span class="dim">${points.length} points</span></h2><div class="grid">
+${panel('Source', 'The path as drawn. Open, so it has no inside or outside.',
+	[{ pts: points, colour: SOURCE, width: 2.2 }], box)}
 ${panel('Heading offset', `Whole path moved ${(OFFSET * 4).toFixed(1)} mm at 90°. Shape preserved exactly; cannot fold.`,
-	[{ pts: points, colour: SOURCE, width: 1.6, dash: true }, { pts: heading, colour: HEAD, width: 2.2 }], box)}
-${panel('Normal offset, clean = 0', `Raw. Every point pushed ${OFFSET} mm along its normal. Inside of tight bends folds over itself.`,
-	[{ pts: points, colour: SOURCE, width: 1.6, dash: true }, { pts: raw.points, colour: RAW, width: 2.2 }], box)}
-${panel('clean = 0.5', `${partial.removed} of ${raw.points.length} points removed. Partial tidy-up.`,
-	[{ pts: points, colour: SOURCE, width: 1.6, dash: true }, { pts: partial.points, colour: CLEAN, width: 2.2 }], box)}
-${panel('clean = 1', `${cleaned.removed} of ${raw.points.length} points removed. Nothing left closer than ${OFFSET} mm to the source.`,
-	[{ pts: points, colour: SOURCE, width: 1.6, dash: true }, { pts: cleaned.points, colour: CLEAN, width: 2.2 }], box)}
-${panel('Other side, clean = 1', `Side B. ${other.removed} removed — the outside of a bend spreads rather than folding.`,
-	[{ pts: points, colour: SOURCE, width: 1.6, dash: true }, { pts: other.points, colour: CLEAN, width: 2.2 }], box)}
-${panel('Raw vs cleaned', 'Both together. Pink is what the filter discarded.',
-	[{ pts: raw.points, colour: RAW, width: 1.4 }, { pts: cleaned.points, colour: CLEAN, width: 2.2 },
+	[{ pts: points, colour: SOURCE, width: 1.4, dash: true }, { pts: heading, colour: HEAD, width: 2.2 }], box)}
+${panel('Swept area', `Everything a ${(OFFSET * 2).toFixed(3)} mm tool would touch following this line. Both sides at once.`,
+	[{ pts: [...left.outline, left.outline[0]], colour: RAW, width: 1.8 },
+		{ pts: points, colour: SOURCE, width: 1.2, dash: true }], box)}
+${panel('Normal offset — side A', `${left.points.length} points, held a full ${OFFSET} mm from the line the whole way.`,
+	[{ pts: points, colour: SOURCE, width: 1.4, dash: true }, { pts: left.points, colour: CLEAN, width: 2.2 }], box)}
+${panel('Normal offset — side B', `${right.points.length} points. The other side of the same line.`,
+	[{ pts: points, colour: SOURCE, width: 1.4, dash: true }, { pts: right.points, colour: CLEAN, width: 2.2 }], box)}
+${panel('Both sides', 'Side A and side B together, with the source between them.',
+	[{ pts: left.points, colour: CLEAN, width: 1.8 }, { pts: right.points, colour: HEAD, width: 1.8 },
 		{ pts: points, colour: SOURCE, width: 1.2, dash: true }], box)}
 </div>`);
 }

@@ -229,7 +229,21 @@ it force-closes open paths, which is the bug that motivated the project.
 - [x] **System A: heading offset.** Displace the whole path along one fixed angle. Trivial geometry; the work is the UI knob (Phase 4)
 - [x] **System B: path-normal offset.** Compute the 2D normal at every point and displace along it. Self-intersects on concave curves, spreads on convex ones
 - [x] **Side A / side B** selector
-- [x] **"Clean" slider.** Approach to try first: raw-offset by normals, then **delete every resulting point closer than the offset distance to the original path**. That single filter removes all self-intersection loops, and its tolerance *is* the slider. Resample afterward to restore even spacing
+- [x] ~~**"Clean" slider.**~~ **Removed — there is nothing to tune.** The first
+  implementation built the offset by hand (arcs outward, mitres inward) and then
+  discarded folded points, on the observation that a folded point ends up closer to
+  the source than the offset distance. That passed a property test on every vertex
+  and was still wrong: the filter examined POINTS, the tool follows SEGMENTS. On a
+  coarse zigzag a mitre overshot past a peak, both endpoints a legitimate distance
+  away while the segment between them cut through the source — measured closest
+  approach 0.0000mm against a requested 1.5875mm.
+- [x] **Normal offset delegates to Clipper's open-path inflate** (the documented
+  fallback), which is a true Minkowski offset and cannot produce that. Measured on the
+  same path it holds 1.5824mm, the 0.005mm shortfall being exactly the arc tolerance
+  since polygonal arcs are inscribed. What remains in our code is extracting one side
+  of the closed outline, which Clipper does not do.
+- [x] **Tests sample ALONG segments, not just at vertices** — the distinction that
+  separated a passing test from working geometry.
 - [ ] Both systems composable (heading + normal at once)
 - [x] **Visual test page** in `dev:lab` with pathological inputs: tight S-curves, cusps, near-180° reversals, a spiral, a zigzag with corners tighter than the tool
 - [ ] Fallback if the distance-filter approach fails: offset the closed "stadium" hull via Clipper open-path inflate and extract one side — heavier, more robust, keep in pocket
