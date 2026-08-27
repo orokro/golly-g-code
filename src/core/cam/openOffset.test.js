@@ -37,17 +37,13 @@ const closestApproachOne = (offset, source, samplesPerSegment = 24) => {
 	return best;
 };
 
-/** Worst approach across EVERY piece of a possibly-fragmented offset. */
-const closestApproach = (paths, source, samplesPerSegment = 24) =>
-	Math.min(...paths.map((p) => closestApproachOne(p, source, samplesPerSegment)));
-
-/** Total length of every piece, for checking coverage. */
-const totalLength = (paths) => paths.reduce((sum, p) => {
+/** Length of a polyline, for checking coverage. */
+const lengthOf = (path) => {
 	let length = 0;
-	for (let i = 0; i + 1 < p.length; i++)
-		length += Math.hypot(p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]);
-	return sum + length;
-}, 0);
+	for (let i = 0; i + 1 < path.length; i++)
+		length += Math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]);
+	return length;
+};
 
 const wave = (amplitude, wavelength, width = 200, step = 0.25) => {
 	const pts = [];
@@ -70,18 +66,17 @@ const rooftops = () => {
 describe('heading offset', () => {
 
 	it('moves every point by the same vector', () => {
-		const moved = offsetByHeading([[0, 0], [10, 0], [10, 10]], 5, Math.PI / 2);
-		expect(moved[0][1]).toBeCloseTo(5, 9);
-		expect(moved[2][1]).toBeCloseTo(15, 9);
+		const source = [[0, 0], [10, 0], [10, 10]];
+		const moved = offsetByHeading(source, 5, 0);
+		expect(moved).toEqual([[5, 0], [15, 0], [15, 10]]);
 	});
 
 	it('preserves the shape exactly, so it can never fold', () => {
-		const source = wave(20, 10, 100);
-		const moved = offsetByHeading(source, 7, 0.7);
-
-		for (let i = 1; i < source.length; i++) {
-			const before = Math.hypot(source[i][0] - source[i - 1][0], source[i][1] - source[i - 1][1]);
-			const after = Math.hypot(moved[i][0] - moved[i - 1][0], moved[i][1] - moved[i - 1][1]);
+		const source = wave(9, 12, 60);
+		const moved = offsetByHeading(source, 3, Math.PI / 3);
+		for (let i = 0; i + 1 < source.length; i++) {
+			const before = Math.hypot(source[i + 1][0] - source[i][0], source[i + 1][1] - source[i][1]);
+			const after = Math.hypot(moved[i + 1][0] - moved[i][0], moved[i + 1][1] - moved[i][1]);
 			expect(after).toBeCloseTo(before, 9);
 		}
 	});
@@ -90,23 +85,91 @@ describe('heading offset', () => {
 
 describe('normal offset', () => {
 
-	it('offsets a straight line to a parallel line, in one piece', () => {
-		const { paths } = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.LEFT });
-		expect(paths).toHaveLength(1);
-		for (const [, y] of paths[0])
+	const TOLERANCE = 0.005;
+
+	it('offsets a straight line to a parallel line', () => {
+		const { path } = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.LEFT, tolerance: TOLERANCE });
+		for (const [, y] of path)
 			expect(y).toBeCloseTo(3, 2);
 	});
 
 	it('puts left and right on opposite sides', () => {
-		const left = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.LEFT });
-		const right = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.RIGHT });
-		expect(left.paths[0][0][1]).toBeGreaterThan(0);
-		expect(right.paths[0][0][1]).toBeLessThan(0);
+		const left = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.LEFT, tolerance: TOLERANCE });
+		const right = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.RIGHT, tolerance: TOLERANCE });
+		expect(left.path[0][1]).toBeGreaterThan(0);
+		expect(right.path[0][1]).toBeLessThan(0);
 	});
 
 	it('returns the full swept outline as well as the one side', () => {
-		const { paths, outline } = offsetAlongNormals([[0, 0], [100, 0]], 3);
-		expect(outline.length).toBeGreaterThan(paths[0].length);
+		const { path, outline } = offsetAlongNormals([[0, 0], [100, 0]], 3);
+		expect(outline.length).toBeGreaterThan(path.length);
+	});
+
+	it('starts and finishes square off the ends of the path', () => {
+		// the cut begins one offset out along the normal at the start, not
+		// somewhere round the end cap
+		const { path } = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.LEFT, tolerance: TOLERANCE });
+		expect(path[0][0]).toBeCloseTo(0, 2);
+		expect(path[0][1]).toBeCloseTo(3, 2);
+		expect(path[path.length - 1][0]).toBeCloseTo(100, 2);
+		expect(path[path.length - 1][1]).toBeCloseTo(3, 2);
+	});
+
+	it('runs in the same direction as the source', () => {
+		const { path } = offsetAlongNormals([[0, 0], [100, 0]], 3, { side: Side.LEFT, tolerance: TOLERANCE });
+		expect(path[path.length - 1][0]).toBeGreaterThan(path[0][0]);
+	});
+});
+
+
+describe('one side is ONE cut, start to finish', () => {
+
+	// The thing an earlier version got wrong, and the reason it mattered: it
+	// asked of every outline point "which side of the nearest source segment
+	// are you on?" That has no good answer where a path doubles back (the two
+	// sides swap in space) or where the offset merges over a narrow valley
+	// (the outline belongs to neither side). It cut the path into pieces at
+	// exactly the places a person would expect it to keep going.
+
+	const TOLERANCE = 0.005;
+	const slack = TOLERANCE + 0.001;
+
+	/** Every piece of a path, split wherever it jumps further than a step could. */
+	const pieces = (path, biggestStep) => {
+		let count = path.length > 0 ? 1 : 0;
+		for (let i = 0; i + 1 < path.length; i++)
+			if (Math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]) > biggestStep)
+				count++;
+		return count;
+	};
+
+	it('is one continuous run on a coarse zigzag with valleys tighter than the tool', () => {
+		const source = rooftops();
+		const { path } = offsetAlongNormals(source, 1.5875, { side: Side.LEFT, tolerance: TOLERANCE });
+		expect(path.length).toBeGreaterThan(2);
+		expect(closestApproachOne(path, source)).toBeGreaterThanOrEqual(1.5875 - slack);
+		// no jump longer than the longest source segment: the walk never leaps
+		expect(pieces(path, 40)).toBe(1);
+	});
+
+	it('follows a path that doubles back, round the tip and on', () => {
+		// Greg's houses: drawn deliberately to run back over ground already cut.
+		// The tool should wrap the tip of each spur and carry on, not stop.
+		const source = [[0, 0], [40, 0], [40, 25], [40, 0], [80, 0], [80, 25], [80, 0], [120, 0]];
+		const { path } = offsetAlongNormals(source, 2, { side: Side.LEFT, tolerance: TOLERANCE });
+
+		expect(closestApproachOne(path, source)).toBeGreaterThanOrEqual(2 - slack);
+		expect(pieces(path, 40)).toBe(1);
+
+		// it goes up and over both spurs, so it is far longer than the 120mm
+		// base alone -- a version that stopped at each reversal managed 89.77
+		expect(lengthOf(path)).toBeGreaterThan(200);
+	});
+
+	it('covers nearly all of a long path rather than a fragment of it', () => {
+		const source = wave(6, 90, 200);
+		const { path } = offsetAlongNormals(source, 1.5, { side: Side.LEFT, tolerance: TOLERANCE });
+		expect(lengthOf(path)).toBeGreaterThan(lengthOf(source) * 0.9);
 	});
 });
 
@@ -116,82 +179,90 @@ describe('the offset never cuts closer than it was asked to', () => {
 	// Two sources of legitimate shortfall, and nothing else is acceptable:
 	//   - polygonal arcs are INSCRIBED, so an offset falls inside the true one
 	//     by at most the arc tolerance
-	//   - Clipper works on an integer grid of 1e-4 mm, which rounds both the
-	//     offset distance and the arc tolerance itself
-	// Measured shortfall is 0.00503mm for a 0.005mm tolerance, so the grid
-	// contributes about 3e-5. Allowing a micron over covers it without
-	// weakening the assertion: the bug this test exists for measured 1.5875mm.
+	//   - Clipper works on an integer grid of 1e-4 mm
+	// Measured shortfall is 0.00503mm for a 0.005mm tolerance. The bug this
+	// test exists for measured 1.5875mm.
 	const TOLERANCE = 0.005;
 	const slack = TOLERANCE + 0.001;
 
 	it('holds the distance on a gentle curve', () => {
 		const source = wave(6, 90);
-		const { paths } = offsetAlongNormals(source, 1.5, { side: Side.LEFT, tolerance: TOLERANCE });
-		expect(closestApproach(paths, source)).toBeGreaterThanOrEqual(1.5 - slack);
+		const { path } = offsetAlongNormals(source, 1.5, { side: Side.LEFT, tolerance: TOLERANCE });
+		expect(closestApproachOne(path, source)).toBeGreaterThanOrEqual(1.5 - slack);
 	});
 
 	it('holds the distance where the curve is far tighter than the offset', () => {
-		// radius of curvature well under 0.5mm against a 1.5mm offset
 		const source = wave(9, 12, 120);
-		const { paths } = offsetAlongNormals(source, 1.5, { side: Side.LEFT, tolerance: TOLERANCE });
-		expect(paths.length).toBeGreaterThan(0);
-		expect(closestApproach(paths, source)).toBeGreaterThanOrEqual(1.5 - slack);
+		const { path } = offsetAlongNormals(source, 1.5, { side: Side.LEFT, tolerance: TOLERANCE });
+		expect(path.length).toBeGreaterThan(0);
+		expect(closestApproachOne(path, source)).toBeGreaterThanOrEqual(1.5 - slack);
 	});
 
-	it('holds the distance on a COARSE zigzag — the case that broke the last version', () => {
-		// long segments and sharp valleys. A hand-rolled mitre overshot past the
-		// far side of a peak here: both its endpoints were a full offset distance
-		// from the source while the segment between them passed through it,
-		// measuring 0.0000mm against a requested 1.5875mm.
+	it('holds the distance on a COARSE zigzag — the case that broke the first version', () => {
 		const source = rooftops();
-		const { paths } = offsetAlongNormals(source, 1.5875, { side: Side.LEFT, tolerance: TOLERANCE });
-
-		expect(paths.length).toBeGreaterThan(0);
-		expect(closestApproach(paths, source)).toBeGreaterThanOrEqual(1.5875 - slack);
+		const { path } = offsetAlongNormals(source, 1.5875, { side: Side.LEFT, tolerance: TOLERANCE });
+		expect(path.length).toBeGreaterThan(0);
+		expect(closestApproachOne(path, source)).toBeGreaterThanOrEqual(1.5875 - slack);
 	});
 
 	it('holds the distance on both sides', () => {
 		const source = rooftops();
 		for (const side of [Side.LEFT, Side.RIGHT]) {
-			const { paths } = offsetAlongNormals(source, 2, { side, tolerance: TOLERANCE });
-			expect(closestApproach(paths, source), side).toBeGreaterThanOrEqual(2 - slack);
+			const { path } = offsetAlongNormals(source, 2, { side, tolerance: TOLERANCE });
+			expect(closestApproachOne(path, source), side).toBeGreaterThanOrEqual(2 - slack);
 		}
 	});
 
 	it('holds the distance at several offsets', () => {
 		const source = wave(9, 20, 120);
 		for (const distance of [0.5, 1.5, 3, 6]) {
-			const { paths } = offsetAlongNormals(source, distance, { tolerance: TOLERANCE });
-			expect(closestApproach(paths, source), `${distance}mm`)
+			const { path } = offsetAlongNormals(source, distance, { tolerance: TOLERANCE });
+			expect(closestApproachOne(path, source), `${distance}mm`)
 				.toBeGreaterThanOrEqual(distance - slack);
 		}
+	});
+
+	it('holds it even at an offset large enough to swallow the ends', () => {
+		// Round ends make this structural: every point of the outline is a full
+		// offset from the source, so no arc of it can cut in. With butt ends the
+		// cap lay ACROSS the path and this case measured 4.4087mm against 5.994.
+		const source = wave(9, 20, 120);
+		const { path, warnings } = offsetAlongNormals(source, 6, { tolerance: TOLERANCE });
+		expect(closestApproachOne(path, source)).toBeGreaterThanOrEqual(6 - slack);
+		// and it says so rather than quietly starting somewhere else
+		expect(warnings.length).toBeGreaterThan(0);
+		expect(warnings[0]).toMatch(/swallow/);
 	});
 });
 
 
 describe('degenerate input', () => {
 
+	const TOLERANCE = 0.005;
+
 	it('rejects a non-positive distance', () => {
 		expect(() => offsetAlongNormals([[0, 0], [1, 0]], 0)).toThrow(RangeError);
-		expect(() => offsetAlongNormals([[0, 0], [1, 0]], -2)).toThrow(RangeError);
+		expect(() => offsetAlongNormals([[0, 0], [1, 0]], -1)).toThrow(RangeError);
 	});
 
 	it('returns nothing for a path with no length', () => {
-		expect(offsetAlongNormals([], 1).paths).toEqual([]);
-		expect(offsetAlongNormals([[5, 5]], 1).paths).toEqual([]);
-		expect(offsetAlongNormals([[5, 5], [5, 5], [5, 5]], 1).paths).toEqual([]);
+		expect(offsetAlongNormals([[5, 5]], 2).path).toEqual([]);
+		expect(offsetAlongNormals([], 2).path).toEqual([]);
 	});
 
 	it('ignores repeated points, which have no direction', () => {
-		const { paths } = offsetAlongNormals([[0, 0], [0, 0], [50, 0], [50, 0]], 2, { side: Side.LEFT });
-		expect(paths).toHaveLength(1);
-		for (const [, y] of paths[0])
+		const { path } = offsetAlongNormals([[0, 0], [0, 0], [50, 0], [50, 0]], 2,
+			{ side: Side.LEFT, tolerance: TOLERANCE });
+		for (const [, y] of path)
 			expect(y).toBeCloseTo(2, 2);
 	});
 
 	it('survives a complete reversal without producing infinities', () => {
-		const { paths } = offsetAlongNormals([[0, 0], [50, 0], [0, 0.001]], 3, { side: Side.LEFT });
-		expect(paths.flat().every(([x, y]) => Number.isFinite(x) && Number.isFinite(y))).toBe(true);
+		const { path } = offsetAlongNormals([[0, 0], [10, 0], [0, 0]], 1.5, { tolerance: TOLERANCE });
+		for (const [x, y] of path) {
+			expect(Number.isFinite(x)).toBe(true);
+			expect(Number.isFinite(y)).toBe(true);
+		}
 	});
 });
 
@@ -199,20 +270,17 @@ describe('degenerate input', () => {
 describe('resample', () => {
 
 	it('spaces points evenly and keeps both ends', () => {
-		const out = resample([[0, 0], [10, 0]], 2);
+		const out = resample([[0, 0], [10, 0]], 2.5);
 		expect(out[0]).toEqual([0, 0]);
 		expect(out[out.length - 1]).toEqual([10, 0]);
-		for (let i = 1; i < out.length - 1; i++)
-			expect(Math.hypot(out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1])).toBeCloseTo(2, 6);
+		for (let i = 0; i + 1 < out.length; i++)
+			expect(Math.hypot(out[i + 1][0] - out[i][0], out[i + 1][1] - out[i][1]))
+				.toBeLessThanOrEqual(2.5 + 1e-9);
 	});
 
 	it('carries spacing across segment boundaries rather than restarting', () => {
 		const out = resample([[0, 0], [3, 0], [6, 0]], 2);
-		const gaps = [];
-		for (let i = 1; i < out.length; i++)
-			gaps.push(Math.hypot(out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]));
-		for (const gap of gaps.slice(0, -1))
-			expect(gap).toBeCloseTo(2, 6);
+		expect(out.map(([x]) => x)).toEqual([0, 2, 4, 6]);
 	});
 
 	it('rejects a non-positive spacing', () => {
@@ -220,83 +288,6 @@ describe('resample', () => {
 	});
 
 	it('passes through a path too short to resample', () => {
-		expect(resample([[1, 2]], 5)).toEqual([[1, 2]]);
-	});
-});
-
-
-describe('one side can be several pieces', () => {
-
-	const TOLERANCE = 0.005;
-	const slack = TOLERANCE + 0.001;
-
-	it('keeps EVERY piece, not just the longest', () => {
-		// Deep valleys narrower than twice the offset break one side into
-		// disconnected runs. Keeping only the longest silently drops most of the
-		// cut -- on a real skyline it lost a quarter of it.
-		const source = rooftops();
-		const { paths } = offsetAlongNormals(source, 1.5875, { side: Side.LEFT, tolerance: TOLERANCE });
-
-		expect(paths.length).toBeGreaterThan(1);
-
-		// and the pieces together cover far more than any single one
-		const longest = Math.max(...paths.map((p) => p.length));
-		expect(paths.flat().length).toBeGreaterThan(longest * 1.5);
-	});
-
-	it('handles a path that deliberately retraces itself', () => {
-		// drawn to run back over ground it has already covered, which is a real
-		// technique and makes "the left side" genuinely discontinuous
-		const source = [[0, 0], [40, 0], [40, 25], [40, 0], [80, 0], [80, 25], [80, 0], [120, 0]];
-
-		const { paths } = offsetAlongNormals(source, 2, { side: Side.LEFT, tolerance: TOLERANCE });
-
-		expect(paths.length).toBeGreaterThan(0);
-		expect(closestApproach(paths, source)).toBeGreaterThanOrEqual(2 - slack);
-
-		// The left side here is the top edge in three stretches (38 + 36 + 38)
-		// plus the near wall of each spur (25 each) and half of each spur's cap:
-		// about 164mm, measured 164.34. A version that severed the run at each
-		// spur base managed 89.77, and a version that kept only the longest run
-		// managed 63.89 -- so anything at or below 160 is a real regression, not
-		// a rounding difference.
-		expect(totalLength(paths)).toBeGreaterThan(160);
-	});
-
-	it('does not let a spur sever the run it grows from', () => {
-		// The corner where a spur meets its parent run sits EXACTLY equidistant
-		// from both source segments, and the tie is broken arbitrarily. Judging
-		// that one vertex instead of the edges either side of it tagged the
-		// corner for the far side and cut the run in two there, silently losing
-		// the whole stretch of top edge beyond it.
-		const source = [[0, 0], [50, 0], [50, 20], [50, 0], [100, 0]];
-		const { paths } = offsetAlongNormals(source, 2, { side: Side.LEFT, tolerance: TOLERANCE });
-
-		expect(closestApproach(paths, source)).toBeGreaterThanOrEqual(2 - slack);
-
-		// the top edge either side of the spur is the part that went missing, so
-		// ask for it directly rather than trusting a total
-		const covers = (x) => paths.some((piece) => distanceToPath([x, 2], piece) < 0.01);
-		expect(covers(10), 'before the spur').toBe(true);
-		expect(covers(90), 'after the spur').toBe(true);
-	});
-
-	it('discards runs too short to be a cut, by LENGTH not point count', () => {
-		// A point count looks like the same rule and is not: the offset of a
-		// straight line is a rectangle whose left side is a single edge between
-		// two vertices, and 100mm of perfectly good cut.
-		const straight = offsetAlongNormals([[0, 0], [100, 0]], 3, { tolerance: TOLERANCE });
-		expect(straight.paths).toHaveLength(1);
-		expect(straight.paths[0]).toHaveLength(2);
-		expect(totalLength(straight.paths)).toBeCloseTo(100, 6);
-
-		// nothing kept anywhere is shorter than the arc chord at that offset,
-		// which is the resolution the outline is described at
-		for (const distance of [0.5, 1.5875, 3]) {
-			const chord = 2 * Math.sqrt((2 * distance * TOLERANCE) - (TOLERANCE * TOLERANCE));
-			const { paths } = offsetAlongNormals(rooftops(), distance, { tolerance: TOLERANCE });
-			for (const piece of paths)
-				expect(totalLength([piece]), `${distance}mm`).toBeGreaterThan(chord);
-		}
+		expect(resample([[1, 1]], 2)).toEqual([[1, 1]]);
 	});
 });

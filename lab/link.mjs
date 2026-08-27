@@ -10,8 +10,10 @@
  * work five times. Greg asked to see them, so this draws them: cuts solid,
  * travel dashed, a mark at every plunge, and the order numbered.
  *
- * Three orderings are shown side by side on the same geometry so the difference
- * is visible rather than argued about.
+ * It was built to compare orderings, and what it showed instead was that there
+ * was nothing to order: one side of an open path is one cut. It stays as the
+ * check that this is still true, and as the prototype for the Workspace's
+ * travel layer.
  */
 
 import fs from 'node:fs';
@@ -19,7 +21,6 @@ import path from 'node:path';
 import { importSvgDocument } from '../src/core/svg/document.js';
 import { flattenSubPath } from '../src/core/path/flatten.js';
 import { offsetBothSides } from '../src/core/cam/openOffset.js';
-import { offsetClosed } from '../src/core/geometry/clipper.js';
 
 const input = process.argv[2];
 const output = process.argv[3] ?? 'link.html';
@@ -46,84 +47,9 @@ function lengthOf(pts) {
 	return total;
 }
 
-/**
- * Do segments ab and cd properly cross? Touching at an endpoint does not count.
- *
- * @param {Number[]} a - first segment start
- * @param {Number[]} b - first segment end
- * @param {Number[]} c - second segment start
- * @param {Number[]} d - second segment end
- * @returns {Boolean} true if they cross
- */
-function segmentsCross(a, b, c, d) {
-	const side = (p, q, r) => Math.sign(((q[0] - p[0]) * (r[1] - p[1])) - ((q[1] - p[1]) * (r[0] - p[0])));
-	const s1 = side(a, b, c), s2 = side(a, b, d), s3 = side(c, d, a), s4 = side(c, d, b);
-	return s1 !== s2 && s3 !== s4 && s1 !== 0 && s2 !== 0 && s3 !== 0 && s4 !== 0;
-}
 
-/**
- * Even-odd point-in-ring test.
- *
- * @param {Number[]} point - the query point
- * @param {Array<Number[]>} ring - a closed ring
- * @returns {Boolean} true if inside
- */
-function insideRing(point, ring) {
-	let hit = false;
-	for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-		const [xi, yi] = ring[i], [xj, yj] = ring[j];
-		if ((yi > point[1]) !== (yj > point[1])
-			&& point[0] < (((xj - xi) * (point[1] - yi)) / (yj - yi)) + xi)
-			hit = !hit;
-	}
-	return hit;
-}
 
-/**
- * Would a straight move from a to b leave the material we are already removing?
- *
- * jscut's idea, with a definition of "bounds" that works for an open path: the
- * tool's own swept outline. If the connector stays inside it, the tool is
- * travelling through its own kerf and can stay down; otherwise it must lift.
- *
- * The bounds are grown slightly before this is called, because a cut piece's
- * endpoints sit EXACTLY on the outline and a strict test rejects its own input.
- *
- * @param {Array<Array<Number[]>>} bounds - rings the move must stay within
- * @param {Number[]} a - move start
- * @param {Number[]} b - move end
- * @returns {Boolean} true if the tool must lift
- */
-function crosses(bounds, a, b) {
-	if (dist(a, b) === 0)
-		return false;
-	const staysIn = (ring) => {
-		for (let i = 0; i < ring.length; i++)
-			if (segmentsCross(a, b, ring[i], ring[(i + 1) % ring.length]))
-				return false;
-		return insideRing([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], ring);
-	};
-	return !bounds.some(staysIn);
-}
 
-/**
- * Joins pieces whose connector never leaves cut material.
- *
- * @param {Array<Array<Number[]>>} pieces - the cut pieces, in generated order
- * @param {Array<Array<Number[]>>} bounds - the grown swept outline
- * @returns {Array<Array<Number[]>>} the chained pieces
- */
-function chain(pieces, bounds) {
-	const out = [];
-	for (const piece of pieces) {
-		const last = out[out.length - 1];
-		if (last !== undefined && !crosses(bounds, last[last.length - 1], piece[0]))
-			out[out.length - 1] = last.concat(piece);
-		else
-			out.push(piece.slice());
-	}
-	return out;
-}
 
 /**
  * Turns an ordering into the moves a machine would actually make.
@@ -147,29 +73,6 @@ function plan(pieces, from) {
 	};
 }
 
-/**
- * Greedy nearest-start ordering, never reversing a path. jscut's approach.
- *
- * @param {Array<Array<Number[]>>} pieces - the cut pieces
- * @param {Number[]} from - where the tool starts
- * @returns {Array<Array<Number[]>>} the pieces in cutting order
- */
-function greedy(pieces, from) {
-	const left = pieces.slice();
-	const out = [];
-	let at = from;
-	while (left.length > 0) {
-		let best = 0, bestDist = Infinity;
-		left.forEach((piece, i) => {
-			const d = dist(at, piece[0]);
-			if (d < bestDist) { bestDist = d; best = i; }
-		});
-		const [piece] = left.splice(best, 1);
-		out.push(piece);
-		at = piece[piece.length - 1];
-	}
-	return out;
-}
 
 // ---------------------------------------------------------------- rendering
 
@@ -240,30 +143,26 @@ for (const shape of shapes) {
 			continue;
 
 		const source = flattenSubPath(sub, { tolerance: 0.02 }).points;
-		const { left, outline } = offsetBothSides(source, OFFSET, { tolerance: 0.005 });
+		const { left } = offsetBothSides(source, OFFSET, { tolerance: 0.005 });
 
 		if (left.length === 0)
 			continue;
 
-		const bounds = offsetClosed([outline], 0.01, { toleranceMm: 0.001 });
+		// one side is now ONE cut, so there is nothing left to order -- what this
+		// page shows is that fact: a single plunge and no travel between cuts
+		const cuts = [left];
+
 		const start = [Math.min(...source.map((p) => p[0])), Math.max(...source.map((p) => p[1]))];
 
-		const xs = [...source, ...left.flat()].map((p) => p[0]);
-		const ys = [...source, ...left.flat()].map((p) => p[1]);
+		const xs = [...source, ...left].map((p) => p[0]);
+		const ys = [...source, ...left].map((p) => p[1]);
 		const box = {
 			minX: Math.min(...xs), maxX: Math.max(...xs),
 			minY: Math.min(...ys), maxY: Math.max(...ys),
 		};
 
-		const kept = left.filter((piece) => lengthOf(piece) >= TOOL);
-		const dropped = left.length - kept.length;
-
-		sections.push(`<h2>${shape.label} <span class="dim">${left.length} cut pieces</span></h2><div class="grid">
-${panel('As generated', plan(left, start), source, box)}
-${panel('Nearest-first (jscut\'s order)', plan(greedy(left, start), start), source, box)}
-${panel('Chained where the tool can stay down', plan(chain(left, bounds), start), source, box)}
-${panel(`Chained, and ${dropped} sliver${dropped === 1 ? '' : 's'} under ${TOOL.toFixed(3)} mm dropped`,
-	plan(chain(kept, bounds), start), source, box)}
+		sections.push(`<h2>${shape.label} <span class="dim">${lengthOf(left).toFixed(0)} mm of cut</span></h2><div class="grid">
+${panel('One side, one cut', plan(cuts, start), source, box)}
 </div>`);
 	}
 }

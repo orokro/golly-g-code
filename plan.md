@@ -244,69 +244,76 @@ it force-closes open paths, which is the bug that motivated the project.
   of the closed outline, which Clipper does not do.
 - [x] **Tests sample ALONG segments, not just at vertices** — the distinction that
   separated a passing test from working geometry.
-- [x] **One side is an ARRAY of paths, not one path.** A one-sided offset is only
-  continuous when the source is well behaved. Deep valleys narrower than twice the
-  offset, or a path drawn to retrace its own ground, genuinely split it into
-  disconnected pieces with a lift between them. Keeping only the longest run lost a
-  quarter of Greg's skyline and most of his houses.
-- [x] **Membership is judged per EDGE, not per vertex** — the same mistake as the
-  "clean" slider above, in a second disguise. Where a spur meets the run it grows
-  from, the outline corner sits exactly equidistant from both source segments and
-  the tie is broken by whichever the index reaches first. One vertex tagged for the
-  far side severs the run there: 112mm of 168mm lost, with every individual
-  measurement correct. An edge's midpoint has no such tie, and its clearance is the
-  worst of the midpoint and both endpoints, which also rejects the butt-cap corner
-  that sits *inside* the offset where the source curves back near its own end.
-- [x] **Runs are dropped by LENGTH, never by point count.** The offset of a straight
-  line is a rectangle whose side is one edge between two vertices, and 100mm of cut.
-  Threshold is the arc chord at that offset — the resolution the outline is
-  described at.
+- [x] **One side is ONE path, and the split is topological, not geometric.** The
+  outline is a closed loop: end, one side, end, the other side. So "the left
+  side" is the stretch of loop between the two ends of the path. Walk it and you
+  are done — one continuous cut, start to finish, which is what a person drawing
+  a line expects.
+- [x] ~~Per-point side classification~~ **Removed. It was the wrong question.**
+  Asking each outline point "which side of the nearest source segment are you
+  on?" has no good answer in two ordinary places: at a reversal the two sides
+  SWAP in space (the tool should wrap the tip and carry on), and where the offset
+  merges over a valley narrower than twice the tool the outline belongs to
+  neither side. It cut the path into pieces exactly where it should have kept
+  going — NINE on Greg's 25-point skyline, three of them sub-millimetre slivers
+  sitting across the line. Greg, on seeing the picture: *"the skyline is one
+  continuous line. Why can't it start on the left side, go to the right in one
+  cut?"* It can. It always could. Deleted with it: allRuns, the per-edge
+  clearance test, the corner tie-break, the spatial index, and the fragments.
+  Both sides of the 214-point skyline now take 28ms rather than 35.
+- [x] **ROUND ends, so safety is structural.** Butt ends put a straight edge
+  ACROSS the path, running from full offset on one side, through the line, to
+  full offset on the other — every point of it nearer than the offset distance.
+  The guarantee then depends on the walk excluding those edges, and where the
+  offset merges near an end the cap stops being one identifiable edge and the
+  exclusion quietly fails: 4.4087mm measured against a required 5.994mm. With
+  round ends every point of the outline is exactly the offset from the source, so
+  ANY arc of it is safe. A split mistake now costs coverage, never the work.
+- [x] **Says so when the offset swallows an end.** At an offset large enough that
+  the path's end is no longer on the boundary, the cut cannot start where it was
+  asked to. It still cannot cut too close, but it returns a warning rather than
+  quietly beginning somewhere else.
 - [ ] Both systems composable (heading + normal at once)
 - [x] **Visual test page** in `dev:lab` with pathological inputs: tight S-curves, cusps, near-180° reversals, a spiral, a zigzag with corners tighter than the tool
 - [ ] ~~Fallback if the distance-filter approach fails~~ — taken; this IS the
   implementation now.
 
 ### 1.6 Toolpath linking & ordering
-**This is about plunges, not seconds.** Greg's call, and the measurements back
-it: "the machine moves pretty quick so I personally don't care about" travel
-time. Every travel-time optimisation below is therefore either dropped or
-demoted; what survives is what reduces plunges, or what stops a part coming
-loose. Measured on painted_ladies_v001.svg at a 3.175mm tool:
+**Mostly dissolved.** It existed because the offset was fragmenting paths that
+should never have been fragmented; fixing 1.5 removed the problem rather than
+solving it. One side of an open path is now one cut with one plunge, so on
+Greg's skyline there is nothing left to link or order.
 
-| | plunges | travel |
-|---|---|---|
-| as generated | 5 / 9 | 246 / 263 mm |
-| nearest-first (jscut's `mergePaths`) | 5 / 9 | **434 / 397 mm** |
-| chained | 4 / 6 | 245 / 262 mm |
-| chained, slivers dropped | **1 / 4** | 245 / 262 mm |
+Greg's two rulings stand and shaped what remains: *"the machine moves pretty
+quick so I personally don't care about"* travel time, so nothing here is
+justified by seconds; and this whole area *"seems like some unnecessary
+optimization and is hard to follow"*, which it was.
 
 - [x] ~~`mergePaths` — greedy nearest-neighbour ordering~~ **Rejected, and it is
-  actively harmful.** jscut can re-enter a closed loop at any vertex, so nearest-
-  start is a fair proxy for nearest-anything. Our open paths have two ends and a
-  fixed direction, so greedy grabs a path because its START is near and lands 357mm
-  away at the far end. It nearly doubles travel against doing nothing at all.
-- [ ] `crosses(bounds, a, b)` — **kept, and this is the valuable half.** For open
-  paths "bounds" is the tool's own swept outline, which `offsetBothSides` already
-  returns. Grow it by 0.01mm first: a cut piece's endpoints sit EXACTLY on the
-  outline, so a strict inside-test rejects its own input. Validated on the skyline —
-  the band flips exactly the four 0.25mm adjacencies to "stay down" and still
-  rejects a 38mm connector that holds a full 1.5875mm clearance from the source
-  while crossing open air above the roofs. **Clearance from the line is not the
-  test; being inside material already being removed is.**
+  actively harmful.** jscut can re-enter a closed loop at any vertex, so
+  nearest-start is a fair proxy for nearest-anything. Open paths have two ends
+  and a fixed direction, so greedy grabs a path because its START is near and
+  strands the tool at the far end. Measured: 434mm of travel against 246mm for
+  doing nothing at all.
+- [ ] **Inner-before-outer ordering.** The one hard constraint, and the only item
+  here that is about correctness: cut a part free before cutting its inside and
+  it is a loose piece under a spinning cutter.
+- [ ] `crosses(bounds, a, b)` — **still wanted, but for POCKETS, not for this.**
+  Concentric pocket rings sit inside already-cleared material, so the connector
+  between them stays down and they chain into one continuous path. Notes from the
+  open-path investigation, kept because they will apply there: "bounds" must be
+  grown slightly, since a cut's endpoints sit exactly on the boundary and a
+  strict inside-test rejects its own input; and clearance from the source is NOT
+  the test — a 38mm connector holding a full 1.5875mm clearance while crossing
+  open air above the roofs must still be refused.
 - [ ] `safeToClose` flag → skip retracts between depth passes when the closing chord stays in bounds
-- [ ] **Inner-before-outer ordering.** The one hard constraint here: it is not an
-  optimisation, it stops a part becoming a loose piece under a spinning cutter.
-- [ ] **Drop cut fragments not worth a plunge.** `openOffset` keeps every piece its
-  geometry justifies, down to fractions of a millimetre, because a geometry module
-  has no business deciding what is worth cutting. Linking DOES know the tool: a
-  piece shorter than the cutter diameter removes nothing the plunge has not already
-  removed. On the skyline that is 3 slivers totalling 1.2mm, and dropping them takes
-  the whole 450mm cut from 4 plunges to **one**.
-- [ ] Ordering itself: keep the generated order. Measured gain from any reordering
-  once chaining is in: 1mm in 687mm. Revisit only if a file with many scattered
-  small parts shows otherwise — one file is not a general result.
+- [x] ~~Drop cut fragments not worth a plunge~~ — **moot.** The fragments were
+  artefacts of the side classification, not real geometry. There are none now.
 - [x] **Lab page `lab/link.mjs`** draws the moves between cuts, which a toolpath
-  drawing normally omits. Greg's idea, and it is what settled the table above.
+  drawing normally omits. Greg's idea. Built to compare orderings; what it showed
+  instead was that there was nothing to order, which is how the 1.5 bug was
+  found. Kept as the check that this stays true, and as the prototype for the
+  Workspace travel layer.
 
 ### 1.7 Tabs (holding tabs)
 jscut's are broken: `separateTabs` lives in a gitignored emscripten blob whose

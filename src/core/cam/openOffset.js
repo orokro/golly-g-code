@@ -11,9 +11,9 @@
  * angle. Rigid, shape-preserving, and incapable of folding.
  *
  * **Normal offset** displaces the path along its local normal, so the result
- * follows the shape.
+ * follows the shape. One continuous cut, start to finish.
  *
- * ## Why the normal offset goes through Clipper
+ * ## Why the offset goes through Clipper
  *
  * The first implementation built it by hand: arcs on outward bends, mitres on
  * inward ones, then a filter that discarded any point which had folded over
@@ -29,15 +29,52 @@
  * closest approach: 0.0000mm against a requested 1.5875mm.
  *
  * Clipper's open-path inflate is a true Minkowski offset, so it cannot produce
- * that: measured on the same path it holds 1.5824mm, the 0.005mm shortfall
- * being exactly the arc tolerance, since polygonal arcs are inscribed.
+ * that. What remains here is taking one side of the closed outline it returns,
+ * which is the part Clipper does not do.
  *
- * So the offset itself is Clipper's. What remains here is extracting one side
- * of the closed outline it returns, which is the part Clipper does not do.
+ * ## Why one side is ONE path, and how the second version got that wrong
  *
- * There is no "clean" control any more, and there should not be. The correct
- * offset is exact, not a matter of taste — anything short of it is geometry
- * that cuts where it should not.
+ * The outline is a closed loop with an obvious structure: cap, one side, cap,
+ * the other side, back to the start. So "the left side" is simply **the stretch
+ * of that loop between the two ends of the path**. Walk it and you are done.
+ * One continuous cut, which is what a person drawing a line expects: start at
+ * one end, finish at the other.
+ *
+ * The version before this one did not see that. It asked, of every point on the
+ * outline, "are you on the left of the nearest source segment?" and kept the
+ * runs that said yes. That question has no good answer in two places, and both
+ * of them are ordinary things to draw:
+ *
+ *   - **At a reversal**, where the path doubles back, left and right SWAP in
+ *     space. The tool should simply wrap the tip and carry on, and the honest
+ *     answer to "which side is this?" is "both". The side test cut the path in
+ *     two there.
+ *   - **Where the offset merges with itself** — a valley narrower than twice
+ *     the offset — the outline runs over the top of the valley, belonging to
+ *     neither side in particular. The side test dropped it.
+ *
+ * On Greg's 25-point skyline that produced NINE pieces where there should have
+ * been one, three of them sub-millimetre slivers sitting across the line from
+ * the rest, and it made a linking-and-ordering problem out of nothing. His
+ * reaction to the picture — "the skyline is one continuous line, why can't it
+ * start on the left side, go to the right in one cut?" — is the whole answer.
+ * It can. It always could.
+ *
+ * ## Why ROUND ends
+ *
+ * With butt ends the outline contains two straight edges lying ACROSS the path,
+ * running from full offset on one side, through the path itself, to full offset
+ * on the other. Every point on such an edge is nearer the source than the offset
+ * distance, so the guarantee this module exists to provide depends on the walk
+ * carefully excluding them — and where the offset merges near an end, the cap
+ * stops being one identifiable edge and the exclusion quietly fails. Measured on
+ * a 20mm-wavelength wave offset 6mm: 4.4087mm against a required 5.994mm.
+ *
+ * With round ends there is no such edge. Every point of the outline is exactly
+ * the offset distance from the source, so **any** arc of it is safe by
+ * construction. Getting the split wrong can then cost coverage, but it cannot
+ * cut into the work. That is worth more than the tidier corner butt ends give,
+ * and the walk trims the round part off anyway by starting square.
  */
 
 import { offsetOpen, OpenEnd } from '../geometry/clipper.js';
@@ -47,6 +84,9 @@ export const DEFAULT_TOLERANCE = 0.005;
 
 /** Which side of the path to offset towards. */
 export const Side = Object.freeze({ LEFT: 'left', RIGHT: 'right' });
+
+/** Handedness multiplier for each side, applied to the left normal. */
+const HAND = Object.freeze({ [Side.LEFT]: 1, [Side.RIGHT]: -1 });
 
 
 /**
@@ -91,220 +131,118 @@ function dedupe(points, epsilon = 1e-9) {
 
 
 /**
- * Where a point sits relative to one segment: how far, and on which side.
+ * Unit normal pointing to the left of the direction from a to b.
  *
- * @param {Number[]} point - the query point
  * @param {Number[]} a - segment start
  * @param {Number[]} b - segment end
- * @returns {Object} `{ distance, cross }`; cross is positive to the left of a→b
+ * @returns {Number[]} the unit left normal, or [0, 0] for a zero-length segment
  */
-function classifyAgainstSegment(point, a, b) {
+function leftNormal(a, b) {
 
 	const vx = b[0] - a[0];
 	const vy = b[1] - a[1];
-	const lengthSquared = (vx * vx) + (vy * vy);
+	const length = Math.hypot(vx, vy);
 
-	if (lengthSquared === 0)
-		return { distance: Math.hypot(point[0] - a[0], point[1] - a[1]), cross: 0 };
-
-	let t = (((point[0] - a[0]) * vx) + ((point[1] - a[1]) * vy)) / lengthSquared;
-	t = Math.max(0, Math.min(1, t));
-
-	const nx = a[0] + (t * vx);
-	const ny = a[1] + (t * vy);
-
-	return {
-		distance: Math.hypot(point[0] - nx, point[1] - ny),
-		cross: (vx * (point[1] - ny)) - (vy * (point[0] - nx)),
-	};
+	return length === 0 ? [0, 0] : [-vy / length, vx / length];
 }
 
 
 /**
- * Indexes a path's segments in a uniform grid, for fast nearest-segment queries.
+ * Index of the outline vertex nearest a point, with how far off it was.
  *
- * Classifying every point of the offset outline against every segment of the
- * source is quadratic. On a 1200-point path that was 400ms for one offset, and
- * this runs while somebody drags a slider — so the grid is not an optimisation
- * so much as the difference between interactive and not.
- *
- * @param {Array<Number[]>} path - the source path
- * @param {Number} cellSize - grid cell size in millimetres
- * @returns {Object} an index exposing `classify(point)`
+ * @param {Array<Number[]>} outline - the closed outline
+ * @param {Number[]} point - the point to find
+ * @returns {Object} `{ index, distance }`
  */
-function buildSegmentIndex(path, cellSize) {
+function nearestVertex(outline, point) {
 
-	const cells = new Map();
-	const key = (cx, cy) => `${cx},${cy}`;
+	let index = 0;
+	let distance = Infinity;
 
-	for (let i = 0; i + 1 < path.length; i++) {
-
-		const [ax, ay] = path[i];
-		const [bx, by] = path[i + 1];
-
-		const minX = Math.floor(Math.min(ax, bx) / cellSize);
-		const maxX = Math.floor(Math.max(ax, bx) / cellSize);
-		const minY = Math.floor(Math.min(ay, by) / cellSize);
-		const maxY = Math.floor(Math.max(ay, by) / cellSize);
-
-		for (let cx = minX; cx <= maxX; cx++) {
-			for (let cy = minY; cy <= maxY; cy++) {
-				const k = key(cx, cy);
-				const bucket = cells.get(k);
-				if (bucket === undefined)
-					cells.set(k, [i]);
-				else
-					bucket.push(i);
-			}
+	outline.forEach((vertex, i) => {
+		const found = Math.hypot(vertex[0] - point[0], vertex[1] - point[1]);
+		if (found < distance) {
+			distance = found;
+			index = i;
 		}
+	});
+
+	return { index, distance };
+}
+
+
+/**
+ * Walks the stretch of outline that forms one side of the path.
+ *
+ * A left-side cut starts square off the beginning of the path — one offset
+ * distance along the left normal of the first segment — and finishes square off
+ * the end. Both of those points lie ON the outline, since the round end is a
+ * half-circle whose two ends are exactly them. So the side is just the arc
+ * between them, taken in the direction the path itself runs.
+ *
+ * @param {Array<Number[]>} outline - the closed offset outline
+ * @param {Array<Number[]>} source - the source path, de-duplicated
+ * @param {Number} distance - the offset distance
+ * @param {Number} hand - +1 for the left side, -1 for the right
+ * @returns {Object} `{ path, drift }`, drift being how far the ideal start and
+ *   end sat from the nearest outline vertex — normally zero, and non-zero only
+ *   where the offset has merged over the end of the path
+ */
+function walkSide(outline, source, distance, hand) {
+
+	const count = outline.length;
+	const last = source.length - 1;
+
+	const startNormal = leftNormal(source[0], source[1]);
+	const endNormal = leftNormal(source[last - 1], source[last]);
+
+	const wantStart = [
+		source[0][0] + (hand * distance * startNormal[0]),
+		source[0][1] + (hand * distance * startNormal[1]),
+	];
+	const wantEnd = [
+		source[last][0] + (hand * distance * endNormal[0]),
+		source[last][1] + (hand * distance * endNormal[1]),
+	];
+
+	const from = nearestVertex(outline, wantStart);
+	const to = nearestVertex(outline, wantEnd);
+
+	if (from.index === to.index)
+		return { path: [], drift: Math.max(from.distance, to.distance) };
+
+	// Which way round the loop? Just past the start, the side we want heads the
+	// way the path heads; the other way turns back into the round end.
+	const tangentX = source[1][0] - source[0][0];
+	const tangentY = source[1][1] - source[0][1];
+	const along = (step) => {
+		const next = outline[(from.index + step + count) % count];
+		return ((next[0] - outline[from.index][0]) * tangentX)
+			+ ((next[1] - outline[from.index][1]) * tangentY);
+	};
+	const step = along(1) >= along(-1) ? 1 : -1;
+
+	const path = [outline[from.index]];
+	for (let i = from.index; i !== to.index;) {
+		i = (i + step + count) % count;
+		path.push(outline[i]);
 	}
 
-	return {
-
-		/**
-		 * Distance and side for the nearest segment of the source.
-		 *
-		 * Searches outward one ring of cells at a time, stopping as soon as
-		 * nothing further out could beat the best hit so far.
-		 *
-		 * @param {Number[]} point - the query point
-		 * @returns {Object} `{ distance, cross }`
-		 */
-		classify(point) {
-
-			const cx = Math.floor(point[0] / cellSize);
-			const cy = Math.floor(point[1] / cellSize);
-
-			let best = { distance: Infinity, cross: 0 };
-
-			for (let ring = 0; ring < 64; ring++) {
-
-				if (best.distance <= (ring - 1) * cellSize)
-					break;
-
-				for (let x = cx - ring; x <= cx + ring; x++) {
-					for (let y = cy - ring; y <= cy + ring; y++) {
-
-						// only the newly added outer ring, not the filled square
-						if (ring > 0 && Math.abs(x - cx) !== ring && Math.abs(y - cy) !== ring)
-							continue;
-
-						const bucket = cells.get(key(x, y));
-						if (bucket === undefined)
-							continue;
-
-						for (const i of bucket) {
-							const found = classifyAgainstSegment(point, path[i], path[i + 1]);
-							if (found.distance < best.distance)
-								best = found;
-						}
-					}
-				}
-			}
-
-			return best;
-		},
-	};
-}
-
-
-/**
- * Total length of a polyline, in millimetres.
- *
- * @param {Array<Number[]>} path - the polyline
- * @returns {Number} the length
- */
-function pathLength(path) {
-
-	let total = 0;
-
-	for (let i = 0; i + 1 < path.length; i++)
-		total += Math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]);
-
-	return total;
-}
-
-
-/**
- * Every maximal run of consecutive entries satisfying a predicate.
- *
- * ALL of them, not the longest — that distinction is the whole point.
- *
- * A one-sided offset is only a single continuous path when the source is
- * reasonably well behaved. Give it deep valleys narrower than twice the offset,
- * or a path that deliberately retraces itself, and "the left side" is genuinely
- * several disconnected pieces: the offset region merges across the gap, and what
- * was one side of the line becomes two. The tool would lift and reposition
- * between them, which is a real toolpath, not a defect.
- *
- * An earlier version kept only the longest run. On a skyline with deep valleys
- * that quietly dropped a quarter of the cut, and on a path drawn to retrace
- * itself it dropped most of it.
- *
- * The outline is a closed loop, so a run may wrap past the end of the array;
- * rotating to start at a non-matching entry makes the wrap disappear.
- *
- * @param {Array} items - the loop
- * @param {Function} predicate - called with each item
- * @returns {Array<Array>} every maximal satisfying run, in order
- */
-function allRuns(items, predicate) {
-
-	const count = items.length;
-
-	if (count === 0)
-		return [];
-
-	const flags = items.map((item) => predicate(item) === true);
-
-	if (flags.every((flag) => flag === true))
-		return [[...items]];
-
-	const firstGap = flags.indexOf(false);
-
-	/** @type {Array<Array>} */
-	const runs = [];
-	let current = [];
-
-	// start just past a gap, so no run straddles the array boundary
-	for (let step = 0; step < count; step++) {
-
-		const i = (firstGap + step) % count;
-
-		if (flags[i] === true) {
-			current.push(items[i]);
-		} else if (current.length > 0) {
-			runs.push(current);
-			current = [];
-		}
-	}
-
-	if (current.length > 0)
-		runs.push(current);
-
-	return runs;
+	return { path, drift: Math.max(from.distance, to.distance) };
 }
 
 
 /**
  * Offsets an open path along its normals, to one side.
  *
- * Delegates the offset itself to Clipper — see the file header for why — and
- * then keeps the portion of the resulting closed outline that lies on the
- * requested side of the source.
- *
  * @param {Array<Number[]>} points - the source path, in millimetres
  * @param {Number} distance - offset distance; must be positive
  * @param {Object} [options] - options
  * @param {String} [options.side=Side.LEFT] - which side to offset towards
  * @param {Number} [options.tolerance=DEFAULT_TOLERANCE] - arc tolerance, millimetres
- * @returns {Object} `{ paths, outline }` — the one-sided offset as one or more
- *   polylines, and the full closed outline they were taken from, which is useful
- *   for showing the tool's whole swept area.
- *
- *   `paths` is plural on purpose: see allRuns. A path with deep valleys or one
- *   that retraces itself has a one-sided offset made of several disjoint pieces,
- *   and the tool lifts between them.
+ * @returns {Object} `{ path, outline, warnings }` — the offset as ONE polyline
+ *   running from one end of the source to the other, and the full closed outline
+ *   it was taken from, which is the tool's whole swept area
  * @throws {RangeError} when the distance is not positive
  */
 export function offsetAlongNormals(points, distance, options = {}) {
@@ -313,8 +251,9 @@ export function offsetAlongNormals(points, distance, options = {}) {
 	const both = offsetBothSides(points, distance, options);
 
 	return {
-		paths: side === Side.RIGHT ? both.right : both.left,
+		path: side === Side.RIGHT ? both.right : both.left,
 		outline: both.outline,
+		warnings: both.warnings,
 	};
 }
 
@@ -322,17 +261,15 @@ export function offsetAlongNormals(points, distance, options = {}) {
 /**
  * Offsets an open path to BOTH sides at once.
  *
- * Both sides come out of the same closed outline, so asking for them together
- * costs one Clipper call and one spatial index rather than two of each. On a
- * 1200-point path that is the difference between 165ms and 80ms, which matters
- * because this runs behind a slider.
+ * Both sides come out of the same outline, so asking for them together costs one
+ * Clipper call rather than two.
  *
  * @param {Array<Number[]>} points - the source path, in millimetres
  * @param {Number} distance - offset distance; must be positive
  * @param {Object} [options] - options
  * @param {Number} [options.tolerance=DEFAULT_TOLERANCE] - arc tolerance, millimetres
- * @returns {Object} `{ left, right, outline }`, where left and right are ARRAYS
- *   of polylines — see allRuns for why one side can be several pieces
+ * @returns {Object} `{ left, right, outline, warnings }`, where each side is ONE
+ *   polyline
  * @throws {RangeError} when the distance is not positive
  */
 export function offsetBothSides(points, distance, options = {}) {
@@ -343,104 +280,42 @@ export function offsetBothSides(points, distance, options = {}) {
 		throw new RangeError(`offsetAlongNormals needs a positive distance, got ${distance}`);
 
 	const source = dedupe(points);
+	const empty = { left: [], right: [], outline: [], warnings: [] };
 
 	if (source.length < 2)
-		return { left: [], right: [], outline: [] };
+		return empty;
 
-	// butt ends, so the offset starts and stops square across the path rather
-	// than wrapping round it -- a one-sided offset has nothing to wrap onto
+	// round ends, so every point of the outline is exactly the offset distance
+	// from the source and no arc of it can cut too close -- see the file header
 	const outlines = offsetOpen([source], distance, {
-		end: OpenEnd.BUTT,
+		end: OpenEnd.ROUND,
 		toleranceMm: tolerance,
 	});
 
 	if (outlines.length === 0)
-		return { left: [], right: [], outline: [] };
+		return empty;
 
-	// the largest outline encloses the path; any others are artefacts
+	// the largest outline encloses the path; any others are holes in the swept
+	// area, which the tool does not visit
 	const outline = outlines.reduce(
 		(largest, candidate) => (candidate.length > largest.length ? candidate : largest),
 	);
 
-	const index = buildSegmentIndex(source, Math.max(distance, 1e-6));
+	const left = walkSide(outline, source, distance, HAND[Side.LEFT]);
+	const right = walkSide(outline, source, distance, HAND[Side.RIGHT]);
 
-	// The outline is a closed loop, so it also contains the two end caps, which
-	// run square across the path from one side to the other. A cap's points are
-	// on both sides and at every distance from zero to the full offset, so a side
-	// test alone keeps part of one -- and at a large offset the cap is long,
-	// dragging the kept path in towards the source. Requiring the full offset
-	// distance as well trims the caps exactly where they leave the offset proper,
-	// and states the guarantee we actually want directly.
-	const minimumDistance = distance - tolerance - 0.001;
+	// The square start and end normally land exactly on the outline. They do not
+	// when the offset has swallowed the end of the path -- an offset so large,
+	// against a shape so tight, that the end is no longer on the boundary at all.
+	// The cut is still safe, but it no longer begins where it was asked to, and
+	// that is not something to discover on the machine.
+	const warnings = [];
+	const drift = Math.max(left.drift, right.drift);
+	if (drift > tolerance)
+		warnings.push(`offset of ${distance}mm is large enough to swallow the end of this path;`
+			+ ` the cut starts ${drift.toFixed(3)}mm from where it should`);
 
-	// EDGES, not vertices. The tool traverses the outline's edges, and a vertex
-	// is a worse question to ask than an edge for the same reason the old
-	// hand-rolled fold filter was wrong (see the file header): the answer at a
-	// point does not describe the move.
-	//
-	// Concretely: where a spur meets the run it grows from, the outline has a
-	// corner sitting exactly equidistant from BOTH source segments. The tie is
-	// broken by whichever segment the index happens to reach first, so that one
-	// vertex can come back tagged for the far side -- and because a run is a
-	// chain, that single wrong tag severs the cut there. On a path drawn to
-	// retrace itself this cost three lengths of the top edge, 112mm of 168mm,
-	// with no error anywhere: every point was correctly measured, and the wrong
-	// thing was measured.
-	//
-	// An edge's midpoint has no such tie. It sits squarely alongside one source
-	// segment, and it is also what excludes the end caps, whose midpoints lie on
-	// the source itself at distance zero.
-	//
-	// The SIDE comes from the midpoint, then, but the CLEARANCE has to come from
-	// the whole edge. Where the source curves back on itself near its own end, a
-	// butt cap's corner sits nearer the source than the offset distance -- on a
-	// 20mm-wavelength wave offset 6mm, 5.953mm against a required 5.994mm. That
-	// corner is the first vertex of an otherwise perfectly good run, so judging
-	// the edge by its midpoint alone would let the cut start 0.04mm too deep.
-	// Taking the worst of the midpoint and both endpoints rejects the offending
-	// edge instead, and the run simply starts at the next one.
-	//
-	// Rejecting rather than trimming also keeps a too-close vertex in the MIDDLE
-	// of a run from being quietly dropped, which would leave a chord cutting the
-	// corner it was meant to go round. The run breaks in two there, as it should.
-	const atVertex = outline.map((point) => index.classify(point));
-
-	const edges = outline.map((a, i) => {
-
-		const j = (i + 1) % outline.length;
-		const b = outline[j];
-		const at = index.classify([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
-
-		return {
-			a,
-			b,
-			cross: at.cross,
-			clearance: Math.min(at.distance, atVertex[i].distance, atVertex[j].distance),
-		};
-	});
-
-	// Below one arc chord there is nothing to cut: that is the spacing between
-	// consecutive points on the offset's rounded corners, so a shorter run is a
-	// fragment of the discretisation rather than a move. Keeping one would put a
-	// plunge and a retract into the toolpath for a cut of no length.
-	//
-	// This is a LENGTH, deliberately, not a point count. A point count looks
-	// equivalent and is not: the offset of a straight line is a rectangle, whose
-	// left side is one edge between two vertices and a perfectly good 100mm cut.
-	const chord = 2 * Math.sqrt(Math.max(0, (2 * distance * tolerance) - (tolerance * tolerance)));
-	const minimumRunLength = Math.max(chord, tolerance);
-
-	const keep = (wantLeft) => allRuns(
-		edges,
-		({ clearance, cross }) =>
-			clearance >= minimumDistance && (wantLeft ? cross > 0 : cross < 0),
-	)
-		// a run of edges is a chain, so its polyline is the first edge's start
-		// followed by every edge's end
-		.map((run) => [run[0].a, ...run.map(({ b }) => b)])
-		.filter((path) => pathLength(path) > minimumRunLength);
-
-	return { left: keep(true), right: keep(false), outline };
+	return { left: left.path, right: right.path, outline, warnings };
 }
 
 
