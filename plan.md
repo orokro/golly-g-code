@@ -158,7 +158,7 @@ the UI is the part we've built before. A bug here ruins material.
 jscut supports **only `<path>` and `<rect>`**; everything else throws
 *"…is not supported; try Inkscape's Object to Path"*. That's the polyline
 complaint. It also ignores `viewBox` entirely.
-- [ ] Parse the full primitive set: `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`
+- [x] Parse the full primitive set: `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`
 - [ ] Resolve `<use>` references and nested `<svg>`
 - [ ] Accumulate ancestor `transform` matrices correctly (incl. `transform-origin`)
 - [ ] Honour `viewBox` + `width`/`height` + unit suffixes (`mm`, `cm`, `in`, `pt`, `pc`, `px`) → real physical size

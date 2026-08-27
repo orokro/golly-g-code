@@ -155,8 +155,13 @@ export default [
 			globals: { ...globals.node },
 		},
 		rules: {
+			// tests document themselves through their names and their prose
+			// comments; ceremonial @param tags on a three-line helper are noise
 			'jsdoc/require-jsdoc': 'off',
 			'jsdoc/require-file-overview': 'off',
+			'jsdoc/require-param': 'off',
+			'jsdoc/require-param-description': 'off',
+			'jsdoc/require-returns': 'off',
 		},
 	},
 ];
