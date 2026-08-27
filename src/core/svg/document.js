@@ -198,13 +198,17 @@ function useTargetId(element) {
  * @param {String} svgText - the raw SVG document
  * @param {Object} [options] - options
  * @param {Number} [options.coincidenceTolerance] - forwarded to path normalization
+ * @param {Number} [options.pixelsPerInch] - resolution assumed for unitless sizes;
+ *   see viewport.js. Ignored when the document states a real physical unit.
  * @returns {Object} `{ viewport, shapes, warnings }`
  * @throws {Error} when the document cannot be parsed at all
  */
 export function importSvgDocument(svgText, options = {}) {
 
 	const root = parseSvgRoot(svgText);
-	const viewport = resolveViewport(root);
+	const viewport = resolveViewport(root, options.pixelsPerInch === undefined
+		? {}
+		: { pixelsPerInch: options.pixelsPerInch });
 
 	const idIndex = buildIdIndex(root);
 	const sheets = collectStyleSheets(root);

@@ -17,15 +17,19 @@ import { offsetClosed, offsetOpen, normalize, OpenEnd } from '../src/core/geomet
  * @param {Object} [options] - options
  * @param {Number} [options.toolDiameter=3.175] - tool diameter in millimetres (1/8" default)
  * @param {Number} [options.tolerance=0.01] - flattening tolerance in millimetres
+ * @param {Number} [options.pixelsPerInch] - resolution for unitless document sizes
  * @returns {Object} `{ viewport, shapes, source, outward, inward, stats, warnings }`
  */
 export function runPipeline(svgText, options = {}) {
 
-	const { toolDiameter = 3.175, tolerance = 0.01 } = options;
+	const { toolDiameter = 3.175, tolerance = 0.01, pixelsPerInch } = options;
 	const radius = toolDiameter / 2;
 
 	const startImport = performance.now();
-	const { viewport, shapes, warnings } = importSvgDocument(svgText);
+	const { viewport, shapes, warnings } = importSvgDocument(
+		svgText,
+		pixelsPerInch === undefined ? {} : { pixelsPerInch },
+	);
 	const importMs = performance.now() - startImport;
 
 	const startFlatten = performance.now();
@@ -54,17 +58,34 @@ export function runPipeline(svgText, options = {}) {
 
 	const flattenMs = performance.now() - startFlatten;
 
-	// self-intersecting artwork offsets into slivers unless cleaned first
+	// Offset each shape SEPARATELY.
+	//
+	// An earlier version normalized every closed path in the document together,
+	// which quietly unioned unrelated shapes -- three overlapping circles came out
+	// as one blob. normalize() is for resolving self-intersection WITHIN one path,
+	// not for merging distinct ones. Combining shapes deliberately is a per-job
+	// choice in the app (jscut calls it Combine), never something the importer
+	// does behind your back.
 	const startOffset = performance.now();
-	const cleaned = closedPolygons.length > 0 ? normalize(closedPolygons, 'nonzero') : [];
 
-	const outward = [
-		...(cleaned.length > 0 ? offsetClosed(cleaned, radius) : []),
-		// an open path has no inside or outside, so the tool sweep IS its outline
-		...(openPolylines.length > 0 ? offsetOpen(openPolylines, radius, { end: OpenEnd.ROUND }) : []),
-	];
+	/** @type {Array<Array<Number[]>>} */
+	const outward = [];
 
-	const inward = cleaned.length > 0 ? offsetClosed(cleaned, -radius) : [];
+	/** @type {Array<Array<Number[]>>} */
+	const inward = [];
+
+	for (const polygon of closedPolygons) {
+		const cleaned = normalize([polygon], 'nonzero');
+		if (cleaned.length === 0)
+			continue;
+		outward.push(...offsetClosed(cleaned, radius));
+		inward.push(...offsetClosed(cleaned, -radius));
+	}
+
+	// an open path has no inside or outside, so the tool sweep IS its outline
+	for (const polyline of openPolylines)
+		outward.push(...offsetOpen([polyline], radius, { end: OpenEnd.ROUND }));
+
 	const offsetMs = performance.now() - startOffset;
 
 	const points = source.reduce((sum, s) => sum + s.points.length, 0);
@@ -78,6 +99,8 @@ export function runPipeline(svgText, options = {}) {
 		warnings,
 		stats: {
 			...countSubPathKinds(shapes),
+			pixelsPerInch: viewport.pixelsPerInch,
+			dpiDependent: viewport.dpiDependent,
 			shapes: shapes.length,
 			points,
 			toolDiameter,

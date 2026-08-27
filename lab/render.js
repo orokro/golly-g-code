@@ -111,12 +111,22 @@ function gridMarkup(box, step) {
  * @param {Object} [options] - options
  * @param {Number} [options.padding=5] - margin in millimetres
  * @param {Boolean} [options.showVertices=false] - dot every flattened point
+ * @param {Boolean} [options.colorBySubPath=false] - give each subpath its own hue
+ *   and mark its start point, which is how you tell whether two touching outlines
+ *   are one subpath with a bridge between them or two separate ones
+ * @param {Boolean} [options.showOffsets=true] - draw the offset outlines
  * @param {Number} [options.gridStep=10] - minor grid spacing in millimetres
  * @returns {String} an `<svg>` element
  */
 export function renderSceneSvg(scene, options = {}) {
 
-	const { padding = 5, showVertices = false, gridStep = 10 } = options;
+	const {
+		padding = 5,
+		showVertices = false,
+		colorBySubPath = false,
+		showOffsets = true,
+		gridStep = 10,
+	} = options;
 
 	const all = [
 		...scene.source.map((s) => s.points),
@@ -145,17 +155,31 @@ export function renderSceneSvg(scene, options = {}) {
 
 	parts.push(gridMarkup(view, gridStep));
 
-	for (const polygon of scene.outward ?? [])
-		parts.push(`<path d="${toPathData(polygon, true)}" fill="none" stroke="${PALETTE.outward}" stroke-width="${hair * 1.6}"/>`);
+	if (showOffsets === true) {
 
-	for (const polygon of scene.inward ?? [])
-		parts.push(`<path d="${toPathData(polygon, true)}" fill="none" stroke="${PALETTE.inward}" stroke-width="${hair * 1.6}"/>`);
+		for (const polygon of scene.outward ?? [])
+			parts.push(`<path d="${toPathData(polygon, true)}" fill="none" stroke="${PALETTE.outward}" stroke-width="${hair * 1.6}"/>`);
 
-	for (const sub of scene.source) {
+		for (const polygon of scene.inward ?? [])
+			parts.push(`<path d="${toPathData(polygon, true)}" fill="none" stroke="${PALETTE.inward}" stroke-width="${hair * 1.6}"/>`);
+	}
+
+	for (const [index, sub] of scene.source.entries()) {
+
 		// open subpaths get their own colour: this is the distinction jscut loses
-		const colour = sub.closed ? PALETTE.source : PALETTE.sourceOpen;
+		const colour = colorBySubPath === true
+			? `hsl(${(index * 47) % 360} 70% 62%)`
+			: (sub.closed ? PALETTE.source : PALETTE.sourceOpen);
+
 		const dash = sub.closed ? '' : ` stroke-dasharray="${hair * 6} ${hair * 4}"`;
 		parts.push(`<path d="${toPathData(sub.points, sub.closed)}" fill="none" stroke="${colour}" stroke-width="${hair * 2.2}"${dash}/>`);
+
+		// a start marker makes the drawing ORDER visible, which is what tells you
+		// whether an apparent bridge is a real segment of one subpath
+		if (colorBySubPath === true && sub.points.length > 0) {
+			const [sx, sy] = sub.points[0];
+			parts.push(`<circle cx="${sx.toFixed(3)}" cy="${sy.toFixed(3)}" r="${hair * 4}" fill="${colour}"/>`);
+		}
 	}
 
 	if (showVertices === true) {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-	resolveViewport, parseLengthToMillimeters, parseViewBox,
-	parsePreserveAspectRatio, MM_PER_PX, CSS_PX_PER_INCH,
+	resolveViewport, parseLength, parseLengthToMillimeters, parseViewBox,
+	parsePreserveAspectRatio, MM_PER_PX, CSS_PX_PER_INCH, COMMON_DPI,
 } from './viewport.js';
 import { applyToPoint } from './matrix.js';
 
@@ -154,7 +154,7 @@ describe('incomplete documents', () => {
 
 		expect(result.source).toBe('viewBox-only');
 		expect(result.physical.width).toBeCloseTo(25.4, 9);
-		expect(result.warnings.join(' ')).toMatch(/CSS pixels/i);
+		expect(result.warnings.join(' ')).toMatch(/pixels at 96 per inch/i);
 	});
 
 	it('handles a size with no viewBox, where user units are pixels', () => {
@@ -181,5 +181,89 @@ describe('incomplete documents', () => {
 
 	it('pins the CSS pixel constant', () => {
 		expect(CSS_PX_PER_INCH).toBe(96);
+	});
+});
+
+
+describe('resolution ambiguity — the reason jscut has a px/inch box at all', () => {
+
+	it('marks physical units as NOT dpi dependent', () => {
+		for (const value of ['100mm', '10cm', '4in', '72pt', '6pc'])
+			expect(parseLength(value).dpiDependent, value).toBe(false);
+	});
+
+	it('marks unitless and px values as dpi dependent', () => {
+		expect(parseLength('612').dpiDependent).toBe(true);
+		expect(parseLength('612px').dpiDependent).toBe(true);
+	});
+
+	it('resolves a unitless length against the given resolution', () => {
+		// the exact case that made jscut need 72 for Illustrator files:
+		// 612 units is either 6.375in of CSS pixels or 8.5in of points
+		expect(parseLength('612', 96).millimeters).toBeCloseTo(161.925, 3);
+		expect(parseLength('612', 72).millimeters).toBeCloseTo(215.9, 3);
+	});
+
+	it('ignores the setting entirely when the document states a real unit', () => {
+		expect(parseLength('100mm', 72).millimeters).toBeCloseTo(100, 9);
+		expect(parseLength('100mm', 96).millimeters).toBeCloseTo(100, 9);
+	});
+
+	it('rescales a whole unitless document, and says the size is assumed', () => {
+		const attrs = 'width="612" height="792" viewBox="0 0 612 792"';
+		const at96 = resolveViewport(svg({ width: '612', height: '792', viewBox: '0 0 612 792' }));
+		const at72 = resolveViewport(
+			svg({ width: '612', height: '792', viewBox: '0 0 612 792' }), { pixelsPerInch: 72 },
+		);
+		void attrs;
+
+		expect(at96.dpiDependent).toBe(true);
+		expect(at72.dpiDependent).toBe(true);
+
+		expect(at96.physical.width).toBeCloseTo(161.925, 3);
+		expect(at72.physical.width).toBeCloseTo(215.9, 3);
+
+		// US Letter, which is what an Illustrator artboard of that size actually is
+		expect(at72.physical.height).toBeCloseTo(279.4, 3);
+
+		// and the ratio is exactly the ratio of the two assumptions
+		expect(at72.scaleX / at96.scaleX).toBeCloseTo(96 / 72, 9);
+
+		expect(at96.warnings.join(' ')).toMatch(/without a physical unit/i);
+	});
+
+	it('leaves a document with real units completely unaffected by the setting', () => {
+		const element = svg({ width: '100mm', height: '50mm', viewBox: '0 0 200 100' });
+
+		const at96 = resolveViewport(element);
+		const at72 = resolveViewport(element, { pixelsPerInch: 72 });
+
+		expect(at96.dpiDependent).toBe(false);
+		expect(at72.dpiDependent).toBe(false);
+		expect(at72.physical.width).toBeCloseTo(at96.physical.width, 9);
+		expect(at72.scaleX).toBeCloseTo(at96.scaleX, 12);
+
+		// nothing to assume, so nothing to warn about
+		expect(at96.warnings).toHaveLength(0);
+	});
+
+	it('applies the setting when there is only a viewBox', () => {
+		const at72 = resolveViewport(svg({ viewBox: '0 0 72 72' }), { pixelsPerInch: 72 });
+		expect(at72.physical.width).toBeCloseTo(25.4, 6);
+		expect(at72.dpiDependent).toBe(true);
+	});
+
+	it('reports the resolution it used, so a UI can show it', () => {
+		expect(resolveViewport(svg({ viewBox: '0 0 10 10' })).pixelsPerInch).toBe(96);
+		expect(resolveViewport(svg({ viewBox: '0 0 10 10' }), { pixelsPerInch: 72 }).pixelsPerInch).toBe(72);
+	});
+
+	it('rejects a nonsensical resolution', () => {
+		expect(() => resolveViewport(svg({ viewBox: '0 0 10 10' }), { pixelsPerInch: 0 })).toThrow(RangeError);
+		expect(() => resolveViewport(svg({ viewBox: '0 0 10 10' }), { pixelsPerInch: -96 })).toThrow(RangeError);
+	});
+
+	it('offers the presets a user would actually need', () => {
+		expect(COMMON_DPI.map((d) => d.value)).toEqual([96, 72, 90]);
 	});
 });

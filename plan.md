@@ -162,6 +162,12 @@ complaint. It also ignores `viewBox` entirely.
 - [x] Resolve `<use>` references and nested `<svg>`
 - [x] Accumulate ancestor `transform` matrices correctly (incl. `transform-origin`)
 - [x] Honour `viewBox` + `width`/`height` + unit suffixes (`mm`, `cm`, `in`, `pt`, `pc`, `px`) → real physical size
+- [x] **A px/inch override for unitless documents.** Half of jscut's px-per-inch box is a
+  real failing (it ignores stated units) and half is unavoidable: `width="612"` with no
+  unit is equally valid as 612 CSS px @96 (161.9mm) or 612 points @72 (215.9mm = US
+  Letter), and Illustrator writes exactly that. `dpiDependent` on the result says which
+  case a document is in, so the import UI can offer the control **only when it would
+  change something** rather than always asking.
 - [x] **`preserveAspectRatio` handled** (meet/slice + alignment) — when the stated size and
   the viewBox disagree on aspect, the content is uniformly scaled and aligned, not stretched
 - [ ] Text → outlines (opentype.js or the browser's own text-to-path; needs a decision — Node-side tests push toward opentype.js)
@@ -334,6 +340,9 @@ retrofitted.
 - [ ] Drag to reorder within `Jobs\`, and to move jobs between Tool groups (one drag implementation serves both — no move-up/down buttons needed)
 - [ ] First job auto-creates a default Tool group
 - [ ] Import SVG button (multi-select), Import Reference button, New Tool button
+- [ ] **Multi-select in the outliner**, with the Inspector showing the shared fields
+  of a mixed selection. Needed for the next item; identified as a gap during the
+  Phase 1.3 lab review.
 - [ ] Rename in place; provenance label shown on jobs
 - [ ] Context menus (`@imengyu/vue3-context-menu` ships with `vue-win-mgr` already)
 
@@ -344,6 +353,11 @@ retrofitted.
 - [ ] Per-node-type layouts driven by the schemas from 3.3
 - [ ] Inherited-value visual state + reset button
 - [ ] Action buttons: **Create Job from Path**, **Use Path as Work Material**, **Add Tab**, **Calibrate Scale**, **Detach**, **Set Tool Width**
+- [ ] **Create Job from PathS** (multi-select) with a Combine mode — Union / Intersect /
+  Difference / XOR, the same set jscut offers. Union matters for real work: three
+  overlapping circles cut separately re-cut air where earlier circles already
+  cleared it. Combining must always be an explicit per-job choice; the importer
+  never merges shapes on its own.
 
 ---
 

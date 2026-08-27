@@ -44,7 +44,8 @@ export function renderReportHtml(result, options = {}) {
 		['document size', viewport.physical
 			? `${viewport.physical.width.toFixed(2)} × ${viewport.physical.height.toFixed(2)} mm`
 			: 'unknown'],
-		['size came from', viewport.source],
+		['size came from', viewport.source
+			+ (viewport.dpiDependent ? ` (ASSUMED at ${viewport.pixelsPerInch} px/inch)` : ' (stated by the file)')],
 		['scale', `${viewport.scaleX.toFixed(6)} mm per user unit`],
 		['shapes', String(stats.shapes)],
 		['subpaths', `${stats.closed} closed, ${stats.open} open`],
