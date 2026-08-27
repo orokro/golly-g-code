@@ -203,6 +203,13 @@ complaint. It also ignores `viewBox` entirely.
 - [ ] **Inside** — offset inward
 - [ ] **Center** — cut on the line
 - [ ] **Engrave** — on the line, no offset, `margin` ignored
+- [ ] **Engrave must use the decomposed contour, not the path as drawn.** A compound
+  shape is commonly authored as ONE closed path with a zero-width bridge running out
+  to its hole and back (confirmed in jscut's own test.svg: `path3034` retraces
+  x=32.8 from y=70.3 to y=79.6). Area operations resolve the bridge automatically via
+  the union, but engraving the raw path would run the tool along the bridge and slit
+  the part. Detect self-touching contours (a single closed subpath that normalizes to
+  more than one path) and warn, since the user may not know the bridge is there.
 - [ ] **Pocket** — concentric inward rings at stepover until empty
 - [ ] Climb vs conventional (winding reversal; note the direction convention must flip between inside and outside so "climb" means the same physical thing on both)
 - [ ] Depth stepping: `topZ → botZ` in pass-depth increments, final pass clamped

@@ -47,6 +47,18 @@ export function runPipeline(svgText, options = {}) {
 		for (const subPath of shape.subPaths) {
 
 			const flat = flattenSubPath(subPath, { tolerance });
+
+			// A contour that decomposes into more than one path is self-touching:
+			// almost always a compound shape written as ONE closed path with a
+			// zero-width bridge running out to its hole and back. Illustrator and
+			// Inkscape both emit these. It matters because the bridge is a real
+			// segment of the path -- harmless for area operations, which resolve it,
+			// but an engrave would cut along it and slit the part.
+			flat.decomposed = flat.closed && flat.points.length >= 3
+				? normalize([flat.points], shape.fillRule)
+				: [];
+			flat.selfTouching = flat.decomposed.length > 1;
+
 			source.push(flat);
 
 			if (flat.closed)
@@ -119,6 +131,7 @@ export function runPipeline(svgText, options = {}) {
 		extent,
 		stats: {
 			...countSubPathKinds(shapes),
+			selfTouching: source.filter((s) => s.selfTouching === true).length,
 			pixelsPerInch: viewport.pixelsPerInch,
 			dpiDependent: viewport.dpiDependent,
 			shapes: shapes.length,

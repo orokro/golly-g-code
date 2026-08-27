@@ -53,7 +53,8 @@ export function renderReportHtml(result, options = {}) {
 			+ (viewport.dpiDependent ? ` (ASSUMED at ${viewport.pixelsPerInch} px/inch)` : ' (stated by the file)')],
 		['scale', `${viewport.scaleX.toFixed(6)} mm per user unit`],
 		['shapes', String(stats.shapes)],
-		['subpaths', `${stats.closed} closed, ${stats.open} open`],
+		['subpaths', `${stats.closed} closed, ${stats.open} open`
+			+ (stats.selfTouching > 0 ? `, ${stats.selfTouching} self-touching (bridged)` : '')],
 		['flattened points', String(stats.points)],
 		['flatten tolerance', `${stats.tolerance} mm`],
 		['tool', `⌀ ${stats.toolDiameter} mm`],

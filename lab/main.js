@@ -68,7 +68,11 @@ function render() {
 
 	const summary = `${extentText}<br>page ${sizeText} · ${stats.shapes} shapes · ${stats.closed} closed + `
 		+ `<span style="color:${PALETTE.sourceOpen}">${stats.open} open</span> subpaths · `
-		+ `${stats.points} points · import ${stats.importMs.toFixed(1)}ms, `
+		+ `${stats.points} points`
+		+ (stats.selfTouching > 0
+			? ` · <span style="color:${PALETTE.sourceOpen}">${stats.selfTouching} bridged</span>`
+			: '')
+		+ ` · import ${stats.importMs.toFixed(1)}ms, `
 		+ `flatten ${stats.flattenMs.toFixed(1)}ms, offset ${stats.offsetMs.toFixed(1)}ms`;
 
 	const warningList = warnings.length === 0
@@ -170,7 +174,8 @@ function renderSubPathTable(result) {
 		return `<tr>
 			<td><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${colour}"></span></td>
 			<td>${index}</td>
-			<td>${sub.closed ? 'closed' : '<b style="color:#ffb347">OPEN</b>'}</td>
+			<td>${sub.closed ? 'closed' : '<b style="color:#ffb347">OPEN</b>'}${
+				sub.selfTouching ? ` <b style="color:#ffb347">+bridge→${sub.decomposed.length}</b>` : ''}</td>
 			<td>${sub.points.length}</td>
 			<td>${start[0].toFixed(2)}, ${start[1].toFixed(2)}</td>
 			<td>${end[0].toFixed(2)}, ${end[1].toFixed(2)}</td>
