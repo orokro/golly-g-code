@@ -68,20 +68,20 @@ Goal: a running Electron window with a patched window manager, a test runner,
 and none of the template's landmines left armed.
 
 ### 0.1 Repo
-- [ ] `git init` in `gollygcode/`, `.gitignore` (node_modules, dist, build, *.gollyg test output)
-- [ ] Copy scaffold from `electron-vue-template`, strip the demo (`HelloWorld.vue`, demo IPC)
-- [ ] Rename: `appId`, `productName`, `name` → GollyGCode
-- [ ] Convert to JavaScript + JSDoc; delete the TS-specific tsconfigs, keep `jsconfig.json` for editor intellisense
-- [ ] `.editorconfig` — tabs, LF
-- [ ] ESLint + `@stylistic` — tabs enforced, JSDoc required on exported functions and file headers
+- [x] `git init` in `gollygcode/`, `.gitignore` (node_modules, dist, build, *.gollyg test output)
+- [x] Copy scaffold from `electron-vue-template`, strip the demo (`HelloWorld.vue`, demo IPC)
+- [x] Rename: `appId`, `productName`, `name` → GollyGCode
+- [x] Convert to JavaScript + JSDoc; delete the TS-specific tsconfigs, keep `jsconfig.json` for editor intellisense
+- [x] `.editorconfig` — tabs, LF
+- [x] ESLint + `@stylistic` — tabs enforced, JSDoc required on exported functions and file headers
 
 ### 0.2 Defuse the template's known landmines
 Each of these fails **only in the packaged build**, never in `npm run dev`.
-- [ ] **CSP.** `main.ts` sets `script-src 'self'`, which blocks blob workers (Monaco instantiates its language services that way) and wasm outright. Widen to `script-src 'self' blob: 'wasm-unsafe-eval'; worker-src 'self' blob:`
-- [ ] **`file://` origin.** Template uses `loadFile()`. Module workers and `fetch()`-based wasm loading both fail from an opaque origin. Register an `app://` scheme via `protocol.handle()` and `loadURL('app://...')` — one change that unblocks workers, wasm and Monaco together
-- [ ] **`scripts/build.js` uses `Promise.allSettled`** — a main-process compile error prints success and packages partial output. Change to `Promise.all`
-- [ ] `electron-builder.json` has **no `mac` key at all** — add targets/arch even though macOS isn't a v1 target, so a stray `build:mac` doesn't silently produce something broken
-- [ ] Upgrade Electron / Vite / Vue to current (D1 removes the version ceiling)
+- [x] **CSP.** `main.ts` sets `script-src 'self'`, which blocks blob workers (Monaco instantiates its language services that way) and wasm outright. Widen to `script-src 'self' blob: 'wasm-unsafe-eval'; worker-src 'self' blob:`
+- [x] **`file://` origin.** Template uses `loadFile()`. Module workers and `fetch()`-based wasm loading both fail from an opaque origin. Register an `app://` scheme via `protocol.handle()` and `loadURL('app://...')` — one change that unblocks workers, wasm and Monaco together
+- [x] **`scripts/build.js` uses `Promise.allSettled`** — a main-process compile error prints success and packages partial output. Change to `Promise.all`
+- [x] `electron-builder.json` has **no `mac` key at all** — add targets/arch even though macOS isn't a v1 target, so a stray `build:mac` doesn't silently produce something broken
+- [x] Upgrade Electron / Vite / Vue to current (D1 removes the version ceiling)
 
 ### 0.3 Patch `vue-win-mgr` locally
 Consumed as `"vue-win-mgr": "file:../Vue-Window-Manager"` (npm symlinks it; `npm run build` in that repo first). Publish to npm later once the API settles.
@@ -95,15 +95,15 @@ Consumed as `"vue-win-mgr": "file:../Vue-Window-Manager"` (npm symlinks it; `npm
 - [ ] Rebuild, verify `dist/style.css` filename and whether it needs an explicit import in the app
 
 ### 0.4 Test + tooling
-- [ ] Vitest, running `src/core/**/*.test.js` headlessly
-- [ ] ESLint fence: `no-restricted-imports` for `vue` inside `src/core/`
-- [ ] A `dev:lab` Vite entry serving standalone visual test pages (geometry prototypes render to inline SVG — far more useful than assertions for offset debugging)
+- [x] Vitest, running `src/core/**/*.test.js` headlessly
+- [x] ESLint fence: `no-restricted-imports` for `vue` inside `src/core/`
+- [x] A `dev:lab` Vite entry serving standalone visual test pages (geometry prototypes render to inline SVG — far more useful than assertions for offset debugging)
 
 ### 0.5 Units & coordinate convention **[decide once, obey forever]**
-- [ ] Internal storage is **float64 millimetres, Y-up**, everywhere
-- [ ] Conversion happens at exactly three boundaries: SVG import, Clipper integer scaling, G-code emission
-- [ ] Display unit is a single project-wide setting (jscut's six independent unit dropdowns are the anti-pattern)
-- [ ] `Unit` helpers + tests: mm↔inch, formatting, parsing user input with unit suffixes
+- [x] Internal storage is **float64 millimetres, Y-up**, everywhere
+- [x] Conversion happens at exactly three boundaries: SVG import, Clipper integer scaling, G-code emission
+- [x] Display unit is a single project-wide setting (jscut's six independent unit dropdowns are the anti-pattern)
+- [x] `Unit` helpers + tests: mm↔inch, formatting, parsing user input with unit suffixes
 
 ### 0.6 Spikes
 - [ ] **[SPIKE]** Evaluate Clipper bindings: `clipper2-js` (pure JS port) vs `clipper2-wasm` vs `js-angusj-clipper` (wasm, Clipper1). Criteria: open-path inflate support, bundle size, whether wasm loading survives the `app://` change from 0.2. **Answer needed before 1.3.**
