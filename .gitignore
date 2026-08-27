@@ -10,3 +10,6 @@ coverage
 # local scratch / generated test output
 *.gollyg
 /tmp-out
+
+# generated lab reports
+/lab-output

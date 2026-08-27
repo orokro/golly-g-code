@@ -148,6 +148,16 @@ export default [
 		},
 	},
 
+	// ------------------------------------------- lab scripts (node context)
+	// The lab's browser pages are plain modules, but snapshot.mjs is a CLI.
+	{
+		files: ['lab/**/*.mjs'],
+		languageOptions: {
+			sourceType: 'module',
+			globals: { ...globals.node },
+		},
+	},
+
 	// ----------------------------------------------------------------- tests
 	{
 		files: ['**/*.test.js', 'tests/**/*.js'],

@@ -2,21 +2,41 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<title>GollyGCode — Lab</title>
+		<title>GollyGCode — Geometry Lab</title>
 		<style>
-			body { font-family: ui-monospace, Menlo, monospace; background:#16161a; color:#ddd; padding:32px; }
-			h1 { font-size:18px; margin:0 0 4px; }
-			p  { opacity:.55; margin:0 0 24px; }
-			ul { line-height:1.9; padding-left:18px; }
-			a  { color:#5ec8d8; }
-			.empty { opacity:.4; font-style:italic; }
+			:root { color-scheme: dark; }
+			body { margin:0; padding:28px; background:#0f0f12; color:#d7d7de;
+			       font:13px/1.7 ui-monospace, Menlo, Consolas, monospace; }
+			h1 { font-size:15px; margin:0 0 2px; color:#fff; }
+			.sub { color:#7a7a86; margin:0 0 22px; }
+			.drop { border:1px dashed #3a3a45; border-radius:8px; padding:26px;
+			        text-align:center; color:#7a7a86; cursor:pointer; }
+			.drop.over { border-color:#5ec8d8; color:#5ec8d8; }
+			.controls { margin:18px 0; display:flex; gap:20px; flex-wrap:wrap; align-items:center; }
+			label { color:#7a7a86; }
+			input[type=number] { width:74px; background:#1b1b21; color:#d7d7de;
+			                     border:1px solid #33333d; border-radius:4px; padding:3px 6px;
+			                     font:inherit; }
+			#out { margin-top:20px; }
+			.hint { color:#5a5a66; }
 		</style>
 	</head>
 	<body>
 		<h1>GollyGCode — Geometry Lab</h1>
-		<p>Visual prototyping harness. Imports directly from <code>src/core</code>. Nothing here ships.</p>
-		<ul>
-			<li class="empty">No experiments yet — the first will be the open-path normal offset (plan.md &sect;1.5).</li>
-		</ul>
+		<p class="sub">Drop an SVG to run it through the real CAM core. Nothing here ships.</p>
+
+		<div class="drop" id="drop">drop an .svg here, or click to choose one</div>
+
+		<div class="controls">
+			<label>tool ⌀ <input type="number" id="tool" value="3.175" step="0.1" min="0.1"> mm</label>
+			<label>tolerance <input type="number" id="tol" value="0.01" step="0.005" min="0.001"> mm</label>
+			<label><input type="checkbox" id="verts"> show vertices</label>
+			<span class="hint">1/8" = 3.175 mm</span>
+		</div>
+
+		<div id="out"></div>
+		<input type="file" id="file" accept=".svg,image/svg+xml" hidden>
+
+		<script type="module" src="./main.js"></script>
 	</body>
 </html>
