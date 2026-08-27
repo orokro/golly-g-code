@@ -168,11 +168,16 @@ complaint. It also ignores `viewBox` entirely.
 - [ ] Tests: a fixture SVG per primitive, per unit suffix, per transform nesting depth
 
 ### 1.2 Path normalization
-- [ ] Everything → absolute cubic béziers (arcs, quadratics, H/V/S/T all convert)
-- [ ] **Deviation-based flattening** (max sagitta ≈ 0.01mm), *not* jscut's chord-length rule — that rule gives a gentle 200mm arc and a 2mm arc wildly different accuracy
+- [x] Everything → absolute cubic béziers *(**revised**: arcs are NOT converted — see below)*
+- [x] **Arcs preserved as a first-class segment type.** Converting them to cubics bakes in
+  ~0.00027 x radius of radial error that the flattener cannot see or recover; a 50mm circle
+  came out 0.0111mm off a 0.01mm tolerance. Arcs now flatten analytically (the sagitta of a
+  circular segment has a closed form), and as a bonus an arc that survives to the post-processor
+  can be emitted as a real G2/G3 move — partially pre-paying §1.9.
+- [x] **Deviation-based flattening** (max sagitta ≈ 0.01mm), *not* jscut's chord-length rule — that rule gives a gentle 200mm arc and a 2mm arc wildly different accuracy
 - [ ] Douglas–Peucker post-filter at a tolerance below machine resolution, plus a minimum segment length — kills near-collinear runs that make GRBL's planner decelerate
-- [ ] Open vs closed detection (explicit `Z`, or first≈last within epsilon). jscut assumes everything is closed; this is where open-path support begins
-- [ ] Tests: flattening error bounds asserted numerically; point counts sane
+- [x] Open vs closed detection (explicit `Z`, or first≈last within epsilon). jscut assumes everything is closed; this is where open-path support begins
+- [x] Tests: flattening error bounds asserted numerically; point counts sane
 
 ### 1.3 Geometry layer
 - [ ] Clipper wrapper: `offset`, `union`, `intersect`, `difference`, `xor`, `simplify`
