@@ -161,7 +161,9 @@ complaint. It also ignores `viewBox` entirely.
 - [x] Parse the full primitive set: `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`
 - [ ] Resolve `<use>` references and nested `<svg>`
 - [ ] Accumulate ancestor `transform` matrices correctly (incl. `transform-origin`)
-- [ ] Honour `viewBox` + `width`/`height` + unit suffixes (`mm`, `cm`, `in`, `pt`, `pc`, `px`) → real physical size
+- [x] Honour `viewBox` + `width`/`height` + unit suffixes (`mm`, `cm`, `in`, `pt`, `pc`, `px`) → real physical size
+- [x] **`preserveAspectRatio` handled** (meet/slice + alignment) — when the stated size and
+  the viewBox disagree on aspect, the content is uniformly scaled and aligned, not stretched
 - [ ] Text → outlines (opentype.js or the browser's own text-to-path; needs a decision — Node-side tests push toward opentype.js)
 - [ ] Preserve `fill-rule` per element (jscut discards it after the first simplify)
 - [ ] Report unsupported/skipped content explicitly instead of failing silently
