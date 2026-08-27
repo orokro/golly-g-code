@@ -199,21 +199,29 @@ complaint. It also ignores `viewBox` entirely.
 - [x] Arc tolerance as a real deviation parameter, not a magic constant
 
 ### 1.4 Closed-path operations
-- [ ] **Outside** — offset outward by tool radius (+ margin)
-- [ ] **Inside** — offset inward
-- [ ] **Center** — cut on the line
-- [ ] **Engrave** — on the line, no offset, `margin` ignored
-- [ ] **Engrave must use the decomposed contour, not the path as drawn.** A compound
+- [x] **Outside** — offset outward by tool radius (+ margin)
+- [x] **Inside** — offset inward
+- [x] **Center** — cut on the line
+- [x] **Engrave** — on the line, no offset, `margin` ignored
+- [x] **Engrave must use the decomposed contour, not the path as drawn.** A compound
   shape is commonly authored as ONE closed path with a zero-width bridge running out
   to its hole and back (confirmed in jscut's own test.svg: `path3034` retraces
   x=32.8 from y=70.3 to y=79.6). Area operations resolve the bridge automatically via
   the union, but engraving the raw path would run the tool along the bridge and slit
   the part. Detect self-touching contours (a single closed subpath that normalizes to
   more than one path) and warn, since the user may not know the bridge is there.
-- [ ] **Pocket** — concentric inward rings at stepover until empty
-- [ ] Climb vs conventional (winding reversal; note the direction convention must flip between inside and outside so "climb" means the same physical thing on both)
-- [ ] Depth stepping: `topZ → botZ` in pass-depth increments, final pass clamped
-- [ ] Tests: each op against hand-computed expected geometry on simple shapes
+  **Scope note:** there are two ways to author a hole and only one has this problem.
+  The modern form — several subpaths in one `d` (`M…Z M…Z`) with a fill rule, which is
+  what Illustrator's Create Outlines emits — is already safe: each subpath is its own
+  closed loop with no connector. Only the single-subpath bridged form needs decomposing.
+  jscut's test.svg has 16 single-subpath and 3 multi-subpath paths, so both occur in the
+  wild, but this is a correctness guard for imported third-party files rather than a
+  workflow to design around. Authoring the two contours as separate paths — and so as
+  separate jobs — sidesteps it entirely, and is better practice anyway.
+- [x] **Pocket** — concentric inward rings at stepover until empty
+- [x] Climb vs conventional (winding reversal; note the direction convention must flip between inside and outside so "climb" means the same physical thing on both)
+- [x] Depth stepping: `topZ → botZ` in pass-depth increments, final pass clamped
+- [x] Tests: each op against hand-computed expected geometry on simple shapes
 
 ### 1.5 Open-path operations **[RISK — prototype before the UI exists]**
 This is the single highest-unknown item in the plan. jscut has nothing here —
