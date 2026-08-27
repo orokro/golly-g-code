@@ -16,6 +16,9 @@ const dpiInput = document.getElementById('dpi');
 const bySubInput = document.getElementById('bysub');
 const offsetsInput = document.getElementById('offsets');
 const subs = document.getElementById('subs');
+const knownW = document.getElementById('knownW');
+const knownH = document.getElementById('knownH');
+const calib = document.getElementById('calib');
 
 /** The most recently loaded document, so the controls can re-run it. */
 let currentSvg = null;
@@ -57,7 +60,13 @@ function render() {
 				? ` <span style="color:${PALETTE.sourceOpen}">(assumed @ ${stats.pixelsPerInch} px/in)</span>`
 				: ' <span style="color:#7ee081">(stated by the file)</span>');
 
-	const summary = `${sizeText} · ${stats.shapes} shapes · ${stats.closed} closed + `
+	// The geometry extent is the number that answers "how big will this cut",
+	// which is almost never the same as the document size.
+	const extentText = result.extent === null
+		? 'no geometry'
+		: `<b style="color:#fff">cuts ${result.extent.width.toFixed(2)} × ${result.extent.height.toFixed(2)} mm</b>`;
+
+	const summary = `${extentText}<br>page ${sizeText} · ${stats.shapes} shapes · ${stats.closed} closed + `
 		+ `<span style="color:${PALETTE.sourceOpen}">${stats.open} open</span> subpaths · `
 		+ `${stats.points} points · import ${stats.importMs.toFixed(1)}ms, `
 		+ `flatten ${stats.flattenMs.toFixed(1)}ms, offset ${stats.offsetMs.toFixed(1)}ms`;
@@ -77,6 +86,63 @@ function render() {
 		+ '</div>';
 
 	renderSubPathTable(result);
+	renderCalibration(result);
+}
+
+
+/**
+ * Works out what px/inch a document would need to cut at a known real size.
+ *
+ * When artwork was drawn from measurements of a physical object, the object
+ * itself is the ground truth. Rather than making someone try 96, then 72, then
+ * 90 and eyeball the result, this inverts the arithmetic: measure the real
+ * thing, and read off the resolution that makes the geometry match.
+ *
+ * It also cross-checks both axes. If width and height imply different
+ * resolutions, no single setting can be right and something other than DPI is
+ * wrong -- a non-uniform transform, or the wrong feature being measured.
+ *
+ * @param {Object} result - the pipeline result
+ * @returns {void}
+ */
+function renderCalibration(result) {
+
+	const extent = result.extent;
+	const targetW = Number(knownW.value);
+	const targetH = Number(knownH.value);
+
+	if (extent === null || (!(targetW > 0) && !(targetH > 0))) {
+		calib.innerHTML = '';
+		return;
+	}
+
+	const current = result.stats.pixelsPerInch;
+	const lines = [];
+
+	const impliedW = targetW > 0 ? current * (extent.width / targetW) : null;
+	const impliedH = targetH > 0 ? current * (extent.height / targetH) : null;
+
+	if (impliedW !== null)
+		lines.push(`width ${extent.width.toFixed(2)} → ${targetW} mm implies <b>${impliedW.toFixed(2)} px/inch</b>`);
+
+	if (impliedH !== null)
+		lines.push(`height ${extent.height.toFixed(2)} → ${targetH} mm implies <b>${impliedH.toFixed(2)} px/inch</b>`);
+
+	let verdict = '';
+
+	if (impliedW !== null && impliedH !== null) {
+
+		const disagreement = Math.abs(impliedW - impliedH) / Math.max(impliedW, impliedH);
+
+		verdict = disagreement < 0.01
+			? `<div style="color:#7ee081">both axes agree — set px/inch to ${((impliedW + impliedH) / 2).toFixed(2)}</div>`
+			: '<div style="color:#e0798f">the two axes imply DIFFERENT resolutions, so no px/inch setting '
+				+ 'can make both correct. Either the artwork is not to scale on one axis, or the measured '
+				+ 'feature is not the one bounding the geometry.</div>';
+	}
+
+	calib.innerHTML = '<div style="margin:14px 0;padding:12px;border:1px solid #33333d;border-radius:6px">'
+		+ `<div style="color:#7a7a86;margin-bottom:6px">calibration</div>${lines.join('<br>')}${verdict}</div>`;
 }
 
 
@@ -153,5 +219,5 @@ drop.addEventListener('drop', (event) => {
 		load(event.dataTransfer.files[0]);
 });
 
-for (const input of [toolInput, tolInput, vertsInput, dpiInput, bySubInput, offsetsInput])
-	input.addEventListener('change', render);
+for (const input of [toolInput, tolInput, vertsInput, dpiInput, bySubInput, offsetsInput, knownW, knownH])
+	input.addEventListener('input', render);

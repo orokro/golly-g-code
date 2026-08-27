@@ -90,6 +90,25 @@ export function runPipeline(svgText, options = {}) {
 
 	const points = source.reduce((sum, s) => sum + s.points.length, 0);
 
+	// The bounding box of the GEOMETRY, which is not the same thing as the
+	// document size and is usually what the user actually cares about: artwork
+	// normally sits inside a larger artboard, so "how big is the page" and "how
+	// big will this cut" are different questions with different answers.
+	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+	for (const sub of source) {
+		for (const [x, y] of sub.points) {
+			if (x < minX) minX = x;
+			if (x > maxX) maxX = x;
+			if (y < minY) minY = y;
+			if (y > maxY) maxY = y;
+		}
+	}
+
+	const extent = Number.isFinite(minX)
+		? { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY }
+		: null;
+
 	return {
 		viewport,
 		shapes,
@@ -97,6 +116,7 @@ export function runPipeline(svgText, options = {}) {
 		outward,
 		inward,
 		warnings,
+		extent,
 		stats: {
 			...countSubPathKinds(shapes),
 			pixelsPerInch: viewport.pixelsPerInch,

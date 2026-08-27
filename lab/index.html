@@ -41,6 +41,13 @@
 			<span class="hint">1/8" = 3.175 mm</span>
 		</div>
 
+		<div class="controls" style="border-top:1px solid #26262e;padding-top:14px">
+			<label>known real size — width <input type="number" id="knownW" step="0.1" min="0" placeholder="mm"> mm</label>
+			<label>or height <input type="number" id="knownH" step="0.1" min="0" placeholder="mm"> mm</label>
+			<span class="hint">measure the real object; we work out the px/inch</span>
+		</div>
+
+		<div id="calib"></div>
 		<div id="out"></div>
 		<div id="subs"></div>
 		<input type="file" id="file" accept=".svg,image/svg+xml" hidden>

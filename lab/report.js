@@ -41,6 +41,11 @@ export function renderReportHtml(result, options = {}) {
 
 	const rows = [
 		['source', title],
+		['GEOMETRY extent', result.extent
+			? `${result.extent.width.toFixed(2)} × ${result.extent.height.toFixed(2)} mm  `
+				+ `(x ${result.extent.minX.toFixed(2)}..${result.extent.maxX.toFixed(2)}, `
+				+ `y ${result.extent.minY.toFixed(2)}..${result.extent.maxY.toFixed(2)})`
+			: 'no geometry'],
 		['document size', viewport.physical
 			? `${viewport.physical.width.toFixed(2)} × ${viewport.physical.height.toFixed(2)} mm`
 			: 'unknown'],
