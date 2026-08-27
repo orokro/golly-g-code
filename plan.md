@@ -226,12 +226,12 @@ complaint. It also ignores `viewBox` entirely.
 ### 1.5 Open-path operations **[RISK — prototype before the UI exists]**
 This is the single highest-unknown item in the plan. jscut has nothing here —
 it force-closes open paths, which is the bug that motivated the project.
-- [ ] **System A: heading offset.** Displace the whole path along one fixed angle. Trivial geometry; the work is the UI knob (Phase 4)
-- [ ] **System B: path-normal offset.** Compute the 2D normal at every point and displace along it. Self-intersects on concave curves, spreads on convex ones
-- [ ] **Side A / side B** selector
-- [ ] **"Clean" slider.** Approach to try first: raw-offset by normals, then **delete every resulting point closer than the offset distance to the original path**. That single filter removes all self-intersection loops, and its tolerance *is* the slider. Resample afterward to restore even spacing
+- [x] **System A: heading offset.** Displace the whole path along one fixed angle. Trivial geometry; the work is the UI knob (Phase 4)
+- [x] **System B: path-normal offset.** Compute the 2D normal at every point and displace along it. Self-intersects on concave curves, spreads on convex ones
+- [x] **Side A / side B** selector
+- [x] **"Clean" slider.** Approach to try first: raw-offset by normals, then **delete every resulting point closer than the offset distance to the original path**. That single filter removes all self-intersection loops, and its tolerance *is* the slider. Resample afterward to restore even spacing
 - [ ] Both systems composable (heading + normal at once)
-- [ ] **Visual test page** in `dev:lab` with pathological inputs: tight S-curves, cusps, near-180° reversals, a spiral, a zigzag with corners tighter than the tool
+- [x] **Visual test page** in `dev:lab` with pathological inputs: tight S-curves, cusps, near-180° reversals, a spiral, a zigzag with corners tighter than the tool
 - [ ] Fallback if the distance-filter approach fails: offset the closed "stadium" hull via Clipper open-path inflate and extract one side — heavier, more robust, keep in pocket
 
 ### 1.6 Toolpath linking & ordering
