@@ -159,15 +159,21 @@ jscut supports **only `<path>` and `<rect>`**; everything else throws
 *"…is not supported; try Inkscape's Object to Path"*. That's the polyline
 complaint. It also ignores `viewBox` entirely.
 - [x] Parse the full primitive set: `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`
-- [ ] Resolve `<use>` references and nested `<svg>`
-- [ ] Accumulate ancestor `transform` matrices correctly (incl. `transform-origin`)
+- [x] Resolve `<use>` references and nested `<svg>`
+- [x] Accumulate ancestor `transform` matrices correctly (incl. `transform-origin`)
 - [x] Honour `viewBox` + `width`/`height` + unit suffixes (`mm`, `cm`, `in`, `pt`, `pc`, `px`) → real physical size
 - [x] **`preserveAspectRatio` handled** (meet/slice + alignment) — when the stated size and
   the viewBox disagree on aspect, the content is uniformly scaled and aligned, not stretched
 - [ ] Text → outlines (opentype.js or the browser's own text-to-path; needs a decision — Node-side tests push toward opentype.js)
-- [ ] Preserve `fill-rule` per element (jscut discards it after the first simplify)
-- [ ] Report unsupported/skipped content explicitly instead of failing silently
-- [ ] Tests: a fixture SVG per primitive, per unit suffix, per transform nesting depth
+- [x] Preserve `fill-rule` per element (jscut discards it after the first simplify)
+- [x] Report unsupported/skipped content explicitly instead of failing silently
+- [x] **Minimal CSS stylesheet support** — Illustrator's default preset puts properties in an
+  internal `<style>` with `class="st0"` on shapes. Simple selectors only (tag/.class/#id);
+  anything else is warned about, not half-applied. `display:none` in a class is a correctness
+  issue, not a cosmetic one — ignoring it imports shapes the artwork does not draw.
+- [x] **Foreign namespaces ignored by namespace, not by tag name** — Inkscape's `sodipodi:`,
+  RDF metadata and Adobe private tags need no per-editor allow-list.
+- [x] Tests: a fixture SVG per primitive, per unit suffix, per transform nesting depth
 
 ### 1.2 Path normalization
 - [x] Everything → absolute cubic béziers *(**revised**: arcs are NOT converted — see below)*

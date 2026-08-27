@@ -129,6 +129,9 @@ function distanceSquared(a, b) {
  *
  * @param {String} d - raw SVG path data
  * @param {Object} [options] - options
+ * @param {Number[]} [options.matrix] - a composed affine matrix to apply first,
+ *   as `[a, b, c, d, e, f]`. Preferred over `transform` when walking a document,
+ *   where ancestor transforms have already been composed numerically.
  * @param {String} [options.transform] - an SVG transform attribute to apply first.
  *   Applied before arcs are converted, so a non-uniform scale correctly
  *   re-parameterizes the ellipse rather than distorting an approximation of it.
@@ -140,6 +143,7 @@ function distanceSquared(a, b) {
 export function normalizePathData(d, options = {}) {
 
 	const {
+		matrix = null,
 		transform = null,
 		coincidenceTolerance = DEFAULT_COINCIDENCE_TOLERANCE,
 	} = options;
@@ -164,6 +168,18 @@ export function normalizePathData(d, options = {}) {
 
 		if (parsed.err)
 			throw new Error(`Could not apply transform "${transform}": ${parsed.err}`);
+	}
+
+	if (matrix !== null) {
+
+		if (Array.isArray(matrix) === false || matrix.length !== 6
+			|| matrix.some((n) => Number.isFinite(n) === false))
+			throw new Error(`Invalid matrix: ${JSON.stringify(matrix)}`);
+
+		parsed = parsed.matrix(matrix);
+
+		if (parsed.err)
+			throw new Error(`Could not apply matrix: ${parsed.err}`);
 	}
 
 	// abs() makes every coordinate absolute and unshort() expands S and T into
