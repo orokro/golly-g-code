@@ -209,40 +209,80 @@ function buildSegmentIndex(path, cellSize) {
 
 
 /**
- * Takes the longest run of consecutive entries satisfying a predicate.
+ * Total length of a polyline, in millimetres.
  *
- * The outline is a closed loop, so a run may wrap past its end. Doubling the
- * index range is the cheap way to let it.
+ * @param {Array<Number[]>} path - the polyline
+ * @returns {Number} the length
+ */
+function pathLength(path) {
+
+	let total = 0;
+
+	for (let i = 0; i + 1 < path.length; i++)
+		total += Math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]);
+
+	return total;
+}
+
+
+/**
+ * Every maximal run of consecutive entries satisfying a predicate.
+ *
+ * ALL of them, not the longest — that distinction is the whole point.
+ *
+ * A one-sided offset is only a single continuous path when the source is
+ * reasonably well behaved. Give it deep valleys narrower than twice the offset,
+ * or a path that deliberately retraces itself, and "the left side" is genuinely
+ * several disconnected pieces: the offset region merges across the gap, and what
+ * was one side of the line becomes two. The tool would lift and reposition
+ * between them, which is a real toolpath, not a defect.
+ *
+ * An earlier version kept only the longest run. On a skyline with deep valleys
+ * that quietly dropped a quarter of the cut, and on a path drawn to retrace
+ * itself it dropped most of it.
+ *
+ * The outline is a closed loop, so a run may wrap past the end of the array;
+ * rotating to start at a non-matching entry makes the wrap disappear.
  *
  * @param {Array} items - the loop
  * @param {Function} predicate - called with each item
- * @returns {Array} the longest satisfying run, in order
+ * @returns {Array<Array>} every maximal satisfying run, in order
  */
-function longestRun(items, predicate) {
+function allRuns(items, predicate) {
 
 	const count = items.length;
+
+	if (count === 0)
+		return [];
+
 	const flags = items.map((item) => predicate(item) === true);
 
-	if (flags.every((f) => f === true))
-		return [...items];
+	if (flags.every((flag) => flag === true))
+		return [[...items]];
 
-	let best = [];
+	const firstGap = flags.indexOf(false);
+
+	/** @type {Array<Array>} */
+	const runs = [];
 	let current = [];
 
-	for (let i = 0; i < count * 2; i++) {
+	// start just past a gap, so no run straddles the array boundary
+	for (let step = 0; step < count; step++) {
 
-		if (flags[i % count] === true) {
-			current.push(items[i % count]);
-			if (current.length > best.length)
-				best = [...current];
-			if (current.length >= count)
-				break;
-		} else {
+		const i = (firstGap + step) % count;
+
+		if (flags[i] === true) {
+			current.push(items[i]);
+		} else if (current.length > 0) {
+			runs.push(current);
 			current = [];
 		}
 	}
 
-	return best;
+	if (current.length > 0)
+		runs.push(current);
+
+	return runs;
 }
 
 
@@ -258,9 +298,13 @@ function longestRun(items, predicate) {
  * @param {Object} [options] - options
  * @param {String} [options.side=Side.LEFT] - which side to offset towards
  * @param {Number} [options.tolerance=DEFAULT_TOLERANCE] - arc tolerance, millimetres
- * @returns {Object} `{ points, outline }` — the one-sided offset, and the full
- *   closed outline it was taken from, which is useful for showing the tool's
- *   whole swept area
+ * @returns {Object} `{ paths, outline }` — the one-sided offset as one or more
+ *   polylines, and the full closed outline they were taken from, which is useful
+ *   for showing the tool's whole swept area.
+ *
+ *   `paths` is plural on purpose: see allRuns. A path with deep valleys or one
+ *   that retraces itself has a one-sided offset made of several disjoint pieces,
+ *   and the tool lifts between them.
  * @throws {RangeError} when the distance is not positive
  */
 export function offsetAlongNormals(points, distance, options = {}) {
@@ -269,7 +313,7 @@ export function offsetAlongNormals(points, distance, options = {}) {
 	const both = offsetBothSides(points, distance, options);
 
 	return {
-		points: side === Side.RIGHT ? both.right : both.left,
+		paths: side === Side.RIGHT ? both.right : both.left,
 		outline: both.outline,
 	};
 }
@@ -287,7 +331,8 @@ export function offsetAlongNormals(points, distance, options = {}) {
  * @param {Number} distance - offset distance; must be positive
  * @param {Object} [options] - options
  * @param {Number} [options.tolerance=DEFAULT_TOLERANCE] - arc tolerance, millimetres
- * @returns {Object} `{ left, right, outline }`
+ * @returns {Object} `{ left, right, outline }`, where left and right are ARRAYS
+ *   of polylines — see allRuns for why one side can be several pieces
  * @throws {RangeError} when the distance is not positive
  */
 export function offsetBothSides(points, distance, options = {}) {
@@ -328,13 +373,72 @@ export function offsetBothSides(points, distance, options = {}) {
 	// and states the guarantee we actually want directly.
 	const minimumDistance = distance - tolerance - 0.001;
 
-	// classify once; both sides read the same answers
-	const classified = outline.map((point) => index.classify(point));
+	// EDGES, not vertices. The tool traverses the outline's edges, and a vertex
+	// is a worse question to ask than an edge for the same reason the old
+	// hand-rolled fold filter was wrong (see the file header): the answer at a
+	// point does not describe the move.
+	//
+	// Concretely: where a spur meets the run it grows from, the outline has a
+	// corner sitting exactly equidistant from BOTH source segments. The tie is
+	// broken by whichever segment the index happens to reach first, so that one
+	// vertex can come back tagged for the far side -- and because a run is a
+	// chain, that single wrong tag severs the cut there. On a path drawn to
+	// retrace itself this cost three lengths of the top edge, 112mm of 168mm,
+	// with no error anywhere: every point was correctly measured, and the wrong
+	// thing was measured.
+	//
+	// An edge's midpoint has no such tie. It sits squarely alongside one source
+	// segment, and it is also what excludes the end caps, whose midpoints lie on
+	// the source itself at distance zero.
+	//
+	// The SIDE comes from the midpoint, then, but the CLEARANCE has to come from
+	// the whole edge. Where the source curves back on itself near its own end, a
+	// butt cap's corner sits nearer the source than the offset distance -- on a
+	// 20mm-wavelength wave offset 6mm, 5.953mm against a required 5.994mm. That
+	// corner is the first vertex of an otherwise perfectly good run, so judging
+	// the edge by its midpoint alone would let the cut start 0.04mm too deep.
+	// Taking the worst of the midpoint and both endpoints rejects the offending
+	// edge instead, and the run simply starts at the next one.
+	//
+	// Rejecting rather than trimming also keeps a too-close vertex in the MIDDLE
+	// of a run from being quietly dropped, which would leave a chord cutting the
+	// corner it was meant to go round. The run breaks in two there, as it should.
+	const atVertex = outline.map((point) => index.classify(point));
 
-	const keep = (wantLeft) => longestRun(
-		outline.map((point, i) => ({ point, at: classified[i] })),
-		({ at }) => at.distance >= minimumDistance && (wantLeft ? at.cross > 0 : at.cross < 0),
-	).map(({ point }) => point);
+	const edges = outline.map((a, i) => {
+
+		const j = (i + 1) % outline.length;
+		const b = outline[j];
+		const at = index.classify([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+
+		return {
+			a,
+			b,
+			cross: at.cross,
+			clearance: Math.min(at.distance, atVertex[i].distance, atVertex[j].distance),
+		};
+	});
+
+	// Below one arc chord there is nothing to cut: that is the spacing between
+	// consecutive points on the offset's rounded corners, so a shorter run is a
+	// fragment of the discretisation rather than a move. Keeping one would put a
+	// plunge and a retract into the toolpath for a cut of no length.
+	//
+	// This is a LENGTH, deliberately, not a point count. A point count looks
+	// equivalent and is not: the offset of a straight line is a rectangle, whose
+	// left side is one edge between two vertices and a perfectly good 100mm cut.
+	const chord = 2 * Math.sqrt(Math.max(0, (2 * distance * tolerance) - (tolerance * tolerance)));
+	const minimumRunLength = Math.max(chord, tolerance);
+
+	const keep = (wantLeft) => allRuns(
+		edges,
+		({ clearance, cross }) =>
+			clearance >= minimumDistance && (wantLeft ? cross > 0 : cross < 0),
+	)
+		// a run of edges is a chain, so its polyline is the first edge's start
+		// followed by every edge's end
+		.map((run) => [run[0].a, ...run.map(({ b }) => b)])
+		.filter((path) => pathLength(path) > minimumRunLength);
 
 	return { left: keep(true), right: keep(false), outline };
 }

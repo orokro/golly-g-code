@@ -44,6 +44,19 @@ if (openPaths.length === 0) {
 
 const d = (pts) => (pts.length === 0 ? '' : 'M' + pts.map(([x, y]) => `${x.toFixed(3)} ${y.toFixed(3)}`).join('L'));
 
+/**
+ * Total length of a polyline, in millimetres.
+ *
+ * @param {Array<Number[]>} pts - the polyline
+ * @returns {Number} the length
+ */
+const lengthOf = (pts) => {
+	let total = 0;
+	for (let i = 0; i + 1 < pts.length; i++)
+		total += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+	return total;
+};
+
 const bboxOf = (sets) => {
 	const pts = sets.flat();
 	const xs = pts.map((p) => p[0]);
@@ -56,7 +69,9 @@ const bboxOf = (sets) => {
  *
  * @param {String} title - panel heading
  * @param {String} note - explanatory line beneath the heading
- * @param {Array<Object>} layers - `{ pts, colour, width, dash, dots }` per layer, drawn in order
+ * @param {Array<Object>} layers - `{ sets, colour, width, dash, ends }` per layer,
+ *   drawn in order; `sets` is an ARRAY of polylines, because a one-sided offset
+ *   is often several disjoint pieces
  * @param {Object} box - bounds shared by every panel, so they are all at one scale
  * @returns {String} a `<figure>` element
  */
@@ -67,14 +82,25 @@ function panel(title, note, layers, box) {
 		(box.maxX - box.minX) + (pad * 2), (box.maxY - box.minY) + (pad * 2)];
 	const hair = Math.max(view[2], view[3]) / 1100;
 
-	const body = layers.map(({ pts, colour, width, dash, dots }) => {
+	const body = layers.map(({ sets, colour, width, dash, ends }) => sets.map((pts) => {
+
+		if (pts.length === 0)
+			return '';
+
 		const stroke = `<path d="${d(pts)}" fill="none" stroke="${colour}" stroke-width="${hair * (width ?? 2)}"`
 			+ (dash ? ` stroke-dasharray="${hair * 6} ${hair * 4}"` : '') + '/>';
-		const marks = dots
-			? pts.map(([x, y]) => `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${hair * 2}" fill="${colour}"/>`).join('')
+
+		// where a piece starts and stops is where the tool lifts, so mark it --
+		// a fragmented offset should LOOK fragmented rather than looking like one
+		// path with a coincidental kink
+		const marks = ends
+			? [pts[0], pts[pts.length - 1]]
+				.map(([x, y]) => `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${hair * 3.5}"`
+					+ ` fill="none" stroke="${colour}" stroke-width="${hair}"/>`).join('')
 			: '';
+
 		return stroke + marks;
-	}).join('');
+	}).join('')).join('');
 
 	return `<figure><figcaption><b>${title}</b><br><span>${note}</span></figcaption>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="${view.join(' ')}">
@@ -95,29 +121,48 @@ for (const { label, points } of openPaths) {
 	const both = offsetBothSides(points, OFFSET);
 	const ms = performance.now() - t0;
 
-	const left = { points: both.left, outline: both.outline };
-	const right = { points: both.right };
+	const { left, right, outline } = both;
 
 	timings.push(`${label}: ${points.length} pts, both sides in ${ms.toFixed(1)} ms`);
 
 	const heading = offsetByHeading(points, OFFSET * 4, Math.PI / 2);
-	const box = bboxOf([points, left.outline, heading]);
+	const box = bboxOf([points, outline, heading]);
 
-	sections.push(`<h2>${label} <span class="dim">${points.length} points</span></h2><div class="grid">
+	/**
+	 * How much of the source a set of offset pieces actually covers.
+	 *
+	 * The number to watch. An offset that quietly drops most of the cut still
+	 * looks plausible in a picture if you are not comparing it to anything, and
+	 * that is exactly the bug this panel exists to catch.
+	 *
+	 * @param {Array<Array<Number[]>>} sets - the pieces
+	 * @returns {String} a caption fragment
+	 */
+	const coverage = (sets) => {
+		const total = sets.reduce((sum, piece) => sum + lengthOf(piece), 0);
+		return `${sets.length} piece${sets.length === 1 ? '' : 's'}, `
+			+ `${total.toFixed(0)} mm of cut against a ${sourceLength.toFixed(0)} mm source`;
+	};
+
+	const sourceLength = lengthOf(points);
+
+	sections.push(`<h2>${label} <span class="dim">${points.length} points, ${sourceLength.toFixed(0)} mm</span></h2><div class="grid">
 ${panel('Source', 'The path as drawn. Open, so it has no inside or outside.',
-	[{ pts: points, colour: SOURCE, width: 2.2 }], box)}
+	[{ sets: [points], colour: SOURCE, width: 2.2 }], box)}
 ${panel('Heading offset', `Whole path moved ${(OFFSET * 4).toFixed(1)} mm at 90°. Shape preserved exactly; cannot fold.`,
-	[{ pts: points, colour: SOURCE, width: 1.4, dash: true }, { pts: heading, colour: HEAD, width: 2.2 }], box)}
+	[{ sets: [points], colour: SOURCE, width: 1.4, dash: true }, { sets: [heading], colour: HEAD, width: 2.2 }], box)}
 ${panel('Swept area', `Everything a ${(OFFSET * 2).toFixed(3)} mm tool would touch following this line. Both sides at once.`,
-	[{ pts: [...left.outline, left.outline[0]], colour: RAW, width: 1.8 },
-		{ pts: points, colour: SOURCE, width: 1.2, dash: true }], box)}
-${panel('Normal offset — side A', `${left.points.length} points, held a full ${OFFSET} mm from the line the whole way.`,
-	[{ pts: points, colour: SOURCE, width: 1.4, dash: true }, { pts: left.points, colour: CLEAN, width: 2.2 }], box)}
-${panel('Normal offset — side B', `${right.points.length} points. The other side of the same line.`,
-	[{ pts: points, colour: SOURCE, width: 1.4, dash: true }, { pts: right.points, colour: CLEAN, width: 2.2 }], box)}
+	[{ sets: [[...outline, outline[0]]], colour: RAW, width: 1.8 },
+		{ sets: [points], colour: SOURCE, width: 1.2, dash: true }], box)}
+${panel('Normal offset — side A', `${coverage(left)}. Rings mark where the tool lifts between pieces.`,
+	[{ sets: [points], colour: SOURCE, width: 1.4, dash: true },
+		{ sets: left, colour: CLEAN, width: 2.2, ends: true }], box)}
+${panel('Normal offset — side B', `${coverage(right)}. The other side of the same line.`,
+	[{ sets: [points], colour: SOURCE, width: 1.4, dash: true },
+		{ sets: right, colour: CLEAN, width: 2.2, ends: true }], box)}
 ${panel('Both sides', 'Side A and side B together, with the source between them.',
-	[{ pts: left.points, colour: CLEAN, width: 1.8 }, { pts: right.points, colour: HEAD, width: 1.8 },
-		{ pts: points, colour: SOURCE, width: 1.2, dash: true }], box)}
+	[{ sets: left, colour: CLEAN, width: 1.8 }, { sets: right, colour: HEAD, width: 1.8 },
+		{ sets: [points], colour: SOURCE, width: 1.2, dash: true }], box)}
 </div>`);
 }
 

@@ -244,9 +244,27 @@ it force-closes open paths, which is the bug that motivated the project.
   of the closed outline, which Clipper does not do.
 - [x] **Tests sample ALONG segments, not just at vertices** — the distinction that
   separated a passing test from working geometry.
+- [x] **One side is an ARRAY of paths, not one path.** A one-sided offset is only
+  continuous when the source is well behaved. Deep valleys narrower than twice the
+  offset, or a path drawn to retrace its own ground, genuinely split it into
+  disconnected pieces with a lift between them. Keeping only the longest run lost a
+  quarter of Greg's skyline and most of his houses.
+- [x] **Membership is judged per EDGE, not per vertex** — the same mistake as the
+  "clean" slider above, in a second disguise. Where a spur meets the run it grows
+  from, the outline corner sits exactly equidistant from both source segments and
+  the tie is broken by whichever the index reaches first. One vertex tagged for the
+  far side severs the run there: 112mm of 168mm lost, with every individual
+  measurement correct. An edge's midpoint has no such tie, and its clearance is the
+  worst of the midpoint and both endpoints, which also rejects the butt-cap corner
+  that sits *inside* the offset where the source curves back near its own end.
+- [x] **Runs are dropped by LENGTH, never by point count.** The offset of a straight
+  line is a rectangle whose side is one edge between two vertices, and 100mm of cut.
+  Threshold is the arc chord at that offset — the resolution the outline is
+  described at.
 - [ ] Both systems composable (heading + normal at once)
 - [x] **Visual test page** in `dev:lab` with pathological inputs: tight S-curves, cusps, near-180° reversals, a spiral, a zigzag with corners tighter than the tool
-- [ ] Fallback if the distance-filter approach fails: offset the closed "stadium" hull via Clipper open-path inflate and extract one side — heavier, more robust, keep in pocket
+- [ ] ~~Fallback if the distance-filter approach fails~~ — taken; this IS the
+  implementation now.
 
 ### 1.6 Toolpath linking & ordering
 Port the one genuinely clever idea in jscut (`js/Cam.js`).
@@ -255,6 +273,12 @@ Port the one genuinely clever idea in jscut (`js/Cam.js`).
 - [ ] `safeToClose` flag → skip retracts between depth passes when the closing chord stays in bounds
 - [ ] Inner-before-outer ordering (or parts fall out mid-job)
 - [ ] Replace jscut's O(n²)-over-every-point search with endpoint-only + a spatial index
+- [ ] **Drop cut fragments not worth a plunge.** `openOffset` keeps every piece its
+  geometry justifies, down to fractions of a millimetre, because a geometry module
+  has no business deciding what is worth cutting. Linking DOES know the tool: a
+  piece shorter than the cutter diameter removes nothing the plunge has not already
+  removed, and costs a lift, a rapid, a plunge and a retract to do it. Measured on
+  the painted-ladies skyline at a 3.175mm tool: pieces of 0.3, 0.4 and 0.5mm.
 
 ### 1.7 Tabs (holding tabs)
 jscut's are broken: `separateTabs` lives in a gitignored emscripten blob whose
