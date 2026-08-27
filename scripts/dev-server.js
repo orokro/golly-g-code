@@ -63,8 +63,13 @@ function startElectron() {
 	if (electronProcess !== null)
 		return;
 
+	// NOTE: spawn the app DIRECTORY, not the main script path. Passing a .js file
+	// puts Electron into "default app" mode, where app.getVersion() reports
+	// Electron's own version instead of ours and getAppPath() is wrong. Passing the
+	// directory makes Electron read package.json exactly as the packaged app does,
+	// so dev and production resolve the entry point through the same path.
 	const args = [
-		Path.join(rootDir, 'src', 'main', 'main.cjs'),
+		rootDir,
 		String(rendererPort),
 	];
 

@@ -23,12 +23,19 @@ so it has to be built first:
 
 ```sh
 cd ../Vue-Window-Manager
-npm install
+npm ci          # NOT `npm install` -- see below
 npm run build
 
 cd ../gollygcode
 npm install
 ```
+
+> **Use `npm ci` in `Vue-Window-Manager`, not `npm install`.** A fresh resolution
+> pulls a `vite-plugin-dts` / `@volar/typescript` / `typescript` combination that
+> fails at config load with
+> `TypeError: Cannot read properties of undefined (reading 'useCaseSensitiveFileNames')`.
+> The committed lockfile pins a working set (typescript 5.8.3, vite-plugin-dts
+> 4.5.4, @volar/typescript 2.4.15); `npm ci` honours it, `npm install` does not.
 
 ## Scripts
 

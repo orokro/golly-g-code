@@ -85,14 +85,14 @@ Each of these fails **only in the packaged build**, never in `npm run dev`.
 
 ### 0.3 Patch `vue-win-mgr` locally
 Consumed as `"vue-win-mgr": "file:../Vue-Window-Manager"` (npm symlinks it; `npm run build` in that repo first). Publish to npm later once the API settles.
-- [ ] **`@layout-changed` emit on `WindowManager`.** Confirmed absent — the only emits in the entire library are `update:showTopBar`, `update:showStatusBar`, `update:splitMergeHandles`. Fire debounced (~250ms) after any structural change: window added/removed/moved, frame split/merged, tab switched, splitter released. Payload = `getLayoutDetails()`
-- [ ] **`windowCtx.isVisible`** — a computed ref, plus `windowCtx.onVisibilityChange(cb)`. Derived from the agreed heuristic:
+- [x] **`@layout-changed` emit on `WindowManager`.** Confirmed absent — the only emits in the entire library are `update:showTopBar`, `update:showStatusBar`, `update:splitMergeHandles`. Fire debounced (~250ms) after any structural change: window added/removed/moved, frame split/merged, tab switched, splitter released. Payload = `getLayoutDetails()`
+- [x] **`windowCtx.isVisible`** — a computed ref, plus `windowCtx.onVisibilityChange(cb)`. Derived from the agreed heuristic:
   - MWI frame → visible unless `window.minimized`
   - Tabbed frame → visible iff `frame.getActiveWindow() === thisWindow`
   - Single frame → always visible
-- [ ] **Expose `frameCtx.getActiveWindow()`** on `WindowFrameContext` (it exists on `WindowFrame` but isn't public)
+- [x] **Expose `frameCtx.getActiveWindow()`** on `WindowFrameContext` (it exists on `WindowFrame` but isn't public)
 - [ ] *(optional, cheap while we're in there)* `windowCtx.onResize(cb)` backed by one internal `ResizeObserver`, so every canvas window doesn't need its own
-- [ ] Rebuild, verify `dist/style.css` filename and whether it needs an explicit import in the app
+- [x] Rebuild, verify `dist/style.css` filename and whether it needs an explicit import in the app
 
 ### 0.4 Test + tooling
 - [x] Vitest, running `src/core/**/*.test.js` headlessly
@@ -106,8 +106,43 @@ Consumed as `"vue-win-mgr": "file:../Vue-Window-Manager"` (npm symlinks it; `npm
 - [x] `Unit` helpers + tests: mm↔inch, formatting, parsing user input with unit suffixes
 
 ### 0.6 Spikes
-- [ ] **[SPIKE]** Evaluate Clipper bindings: `clipper2-js` (pure JS port) vs `clipper2-wasm` vs `js-angusj-clipper` (wasm, Clipper1). Criteria: open-path inflate support, bundle size, whether wasm loading survives the `app://` change from 0.2. **Answer needed before 1.3.**
-- [ ] **[SPIKE]** Integer scale factor for Clipper. jscut used inch×100000. In mm-native terms, decide a scale that keeps sub-micron precision without overflowing on a 1200mm workspace.
+- [x] **[SPIKE]** Evaluate Clipper bindings: `clipper2-js` (pure JS port) vs `clipper2-wasm` vs `js-angusj-clipper` (wasm, Clipper1). Criteria: open-path inflate support, bundle size, whether wasm loading survives the `app://` change from 0.2. **Answer needed before 1.3.**
+- [x] **[SPIKE]** Integer scale factor for Clipper. jscut used inch×100000. In mm-native terms, decide a scale that keeps sub-micron precision without overflowing on a 1200mm workspace.
+
+**Spike answers (resolved):**
+
+- **Library: `clipper2-ts`, pinned to exactly `2.0.1`.** Not `^` -- the `latest`
+  dist-tag points at a prerelease (`2.0.1-18`).
+- **`clipper2-js` is disqualified: it returns mathematically wrong geometry.**
+  Inward-offsetting a plain square produces garbage for every join type, and a
+  shape smaller than the offset fails to vanish. It also has no `arcTolerance`
+  parameter and declares an `@angular/core` peer dependency.
+- **Both wasm options need full `'unsafe-eval'`**, not `'wasm-unsafe-eval'`.
+  Emscripten's glue calls `new Function` at module init. Verified with
+  `node --disallow-code-generation-from-strings`. Choosing pure JS is what lets
+  our CSP stay tight -- and a Worker inherits the document's CSP, so moving the
+  work off-thread would not have escaped it.
+- **It is faster than what jscut shipped anyway**: 2.35 ms/op vs clipper-lib's
+  3.10 ms/op on a 240-point star; 4.5 s vs 6.9 s for a 124-pass pocket.
+- **`SCALE = 10_000`** (1 unit = 1e-4 mm = 100 nm). Safe coordinate range is
+  +/-47,453,132 (the float64 fast path); a 1200 mm workspace reaches 12,000,000,
+  leaving ~4x linear headroom. Never leaves the fast path.
+- **Open-path offsetting works**, with all four end types (Butt / Square / Round /
+  Joined). A 3-point open polyline inflates to exactly one closed stadium outline.
+  `Round` gives true semicircular caps -- the real swept area of a round endmill.
+
+**Rules this forces on Phase 1 (do not skip):**
+
+- [ ] **Pocket passes must be computed from the ORIGINAL boundary, not chained.**
+  Measured drift over 100 passes: 2710 nm chained vs 10 nm from-original.
+- [ ] **Normalise imported SVG with a union before offsetting.** Self-intersecting
+  input offsets into spurious slivers (measured: 3 paths instead of 1).
+- [ ] **Guard degenerate input.** clipper2-ts does not validate; empty paths and a
+  1-point path with `EndType.Polygon` throw raw `TypeError`s.
+- [ ] **Round arcs are inscribed, never circumscribed** -- an outward offset comes
+  out marginally undersized. Offset by `radius + tolerance` where clearance matters.
+- [ ] **No coordinate-range exception is thrown.** Above 2^53 you get silent
+  precision loss, not an error. Validate input extents ourselves.
 
 ---
 

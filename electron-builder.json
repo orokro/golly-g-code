@@ -6,11 +6,30 @@
 		"buildResources": "buildResources"
 	},
 	"files": [
-		{ "from": "src/main", "to": "main", "filter": ["**/*"] },
-		{ "from": "build/renderer", "to": "renderer", "filter": ["**/*"] }
+		{
+			"from": "src/main",
+			"to": "src/main",
+			"filter": [
+				"**/*"
+			]
+		},
+		{
+			"from": "build/renderer",
+			"to": "renderer",
+			"filter": [
+				"**/*"
+			]
+		}
 	],
 	"win": {
-		"target": [{ "target": "nsis", "arch": ["x64"] }]
+		"target": [
+			{
+				"target": "nsis",
+				"arch": [
+					"x64"
+				]
+			}
+		]
 	},
 	"nsis": {
 		"oneClick": false,
@@ -20,7 +39,15 @@
 	},
 	"mac": {
 		"category": "public.app-category.graphics-design",
-		"target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+		"target": [
+			{
+				"target": "dmg",
+				"arch": [
+					"x64",
+					"arm64"
+				]
+			}
+		],
 		"minimumSystemVersion": "11.0",
 		"extendInfo": {
 			"CFBundleDocumentTypes": [
@@ -28,13 +55,17 @@
 					"CFBundleTypeName": "GollyGCode Project",
 					"CFBundleTypeRole": "Editor",
 					"LSHandlerRank": "Owner",
-					"CFBundleTypeExtensions": ["gollyg"]
+					"CFBundleTypeExtensions": [
+						"gollyg"
+					]
 				}
 			]
 		}
 	},
 	"linux": {
-		"target": ["AppImage"],
+		"target": [
+			"AppImage"
+		],
 		"category": "Graphics"
 	},
 	"fileAssociations": [
