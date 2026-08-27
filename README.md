@@ -23,19 +23,21 @@ so it has to be built first:
 
 ```sh
 cd ../Vue-Window-Manager
-npm ci          # NOT `npm install` -- see below
+npm install
 npm run build
 
 cd ../gollygcode
 npm install
 ```
 
-> **Use `npm ci` in `Vue-Window-Manager`, not `npm install`.** A fresh resolution
-> pulls a `vite-plugin-dts` / `@volar/typescript` / `typescript` combination that
-> fails at config load with
+> **Why `Vue-Window-Manager` pins `typescript` to an exact version.**
+> `vite-plugin-dts` needs TypeScript but declares it only as a *peer*, so npm
+> auto-installs it. Resolving without a lockfile therefore picks the newest
+> TypeScript, whose internals `@volar/typescript@2.4.15` cannot read — the build
+> then dies at config load with
 > `TypeError: Cannot read properties of undefined (reading 'useCaseSensitiveFileNames')`.
-> The committed lockfile pins a working set (typescript 5.8.3, vite-plugin-dts
-> 4.5.4, @volar/typescript 2.4.15); `npm ci` honours it, `npm install` does not.
+> An exact `typescript` devDependency makes even a clean clone resolve correctly.
+> Don't loosen it without running the build.
 
 ## Scripts
 
