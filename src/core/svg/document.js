@@ -110,7 +110,7 @@ export function parseSvgRoot(svgText) {
 	try {
 		doc = new DOMParser({ onError: () => {} }).parseFromString(svgText, 'image/svg+xml');
 	} catch (error) {
-		throw new Error(`Could not parse SVG: ${error.message}`);
+		throw new Error(`Could not parse SVG: ${error.message}`, { cause: error });
 	}
 
 	const root = doc?.documentElement;
@@ -270,11 +270,10 @@ export function importSvgDocument(svgText, options = {}) {
 			return;
 		}
 
-		let matrix = parentMatrix;
+		let matrix;
 
 		try {
-			const own = parseTransformList(node.getAttribute('transform'));
-			matrix = multiply(parentMatrix, own);
+			matrix = multiply(parentMatrix, parseTransformList(node.getAttribute('transform')));
 		} catch (error) {
 			warnings.push(`<${tag}${identify(node)}>: ${error.message} — element skipped`);
 			return;
