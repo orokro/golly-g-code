@@ -1,0 +1,12 @@
+node_modules
+build
+dist
+coverage
+
+.vscode
+.idea
+.DS_Store
+
+# local scratch / generated test output
+*.gollyg
+/tmp-out

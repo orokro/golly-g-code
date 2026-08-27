@@ -1,0 +1,26 @@
+/**
+ * Global renderer styles.
+ *
+ * Deliberately minimal — the window manager and the app's own theme layer own
+ * nearly all visual styling. This file only handles the page-level reset needed
+ * for a full-viewport desktop application.
+ */
+
+html, body, #app {
+	margin: 0;
+	padding: 0;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+}
+
+body {
+	font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	font-size: 13px;
+	background: #1e1e22;
+	color: #e0e0e0;
+
+	/* a desktop app should not feel like a web page */
+	user-select: none;
+	cursor: default;
+}

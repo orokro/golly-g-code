@@ -1,0 +1,47 @@
+{
+	"appId": "com.orokro.gollygcode",
+	"productName": "GollyGCode",
+	"directories": {
+		"output": "dist",
+		"buildResources": "buildResources"
+	},
+	"files": [
+		{ "from": "src/main", "to": "main", "filter": ["**/*"] },
+		{ "from": "build/renderer", "to": "renderer", "filter": ["**/*"] }
+	],
+	"win": {
+		"target": [{ "target": "nsis", "arch": ["x64"] }]
+	},
+	"nsis": {
+		"oneClick": false,
+		"perMachine": false,
+		"allowToChangeInstallationDirectory": true,
+		"shortcutName": "GollyGCode"
+	},
+	"mac": {
+		"category": "public.app-category.graphics-design",
+		"target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+		"minimumSystemVersion": "11.0",
+		"extendInfo": {
+			"CFBundleDocumentTypes": [
+				{
+					"CFBundleTypeName": "GollyGCode Project",
+					"CFBundleTypeRole": "Editor",
+					"LSHandlerRank": "Owner",
+					"CFBundleTypeExtensions": ["gollyg"]
+				}
+			]
+		}
+	},
+	"linux": {
+		"target": ["AppImage"],
+		"category": "Graphics"
+	},
+	"fileAssociations": [
+		{
+			"ext": "gollyg",
+			"name": "GollyGCode Project",
+			"role": "Editor"
+		}
+	]
+}

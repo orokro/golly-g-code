@@ -1,0 +1,16 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"checkJs": false,
+		"allowJs": true,
+		"baseUrl": ".",
+		"paths": {
+			"@/*": ["src/renderer/*"],
+			"@core/*": ["src/core/*"]
+		}
+	},
+	"include": ["src/**/*", "lab/**/*", "tests/**/*", "*.js"],
+	"exclude": ["node_modules", "build", "dist"]
+}
