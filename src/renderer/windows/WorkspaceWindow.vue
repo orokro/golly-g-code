@@ -15,6 +15,7 @@
 			<dt>visible</dt><dd :class="{ on: visible }">{{ visible ? 'yes' : 'no' }} <span class="src">via {{ source }}</span></dd>
 			<dt>frames</dt><dd class="count">{{ frames }}</dd>
 			<dt>size</dt><dd>{{ sizeLabel }}</dd>
+			<dt>visits</dt><dd class="count">{{ state.visits }} <span class="src">rides along with the saved layout</span></dd>
 		</dl>
 	</div>
 </template>
@@ -27,7 +28,7 @@ import { usePlaceholder } from './_placeholder.js';
 /** @type {import('vue').Ref} The root element, for size and visibility. */
 const body = ref(null);
 
-const { title, visible, source, frames, sizeLabel } = usePlaceholder('Workspace', body);
+const { title, visible, source, frames, sizeLabel, state } = usePlaceholder('Workspace', body);
 
 </script>
 

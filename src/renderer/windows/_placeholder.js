@@ -16,6 +16,7 @@
 import { ref, computed } from 'vue';
 import { useResize } from '../composables/useResize.js';
 import { useRenderLoop } from '../composables/useRenderLoop.js';
+import { useWindowState } from '../composables/useWindowState.js';
 
 /**
  * Wires a placeholder up to the shell.
@@ -25,6 +26,12 @@ import { useRenderLoop } from '../composables/useRenderLoop.js';
  * @returns {Object} bindings for the template
  */
 export function usePlaceholder(title, bodyRef) {
+
+	// Per-window state that rides along with the saved layout. A counter here
+	// stands in for the Workspace's zoom or the 3D view's camera: click it, save
+	// the layout, reload, and it should still be what you left it at.
+	const state = useWindowState({ visits: 0 });
+	state.visits++;
 
 	/** How many frames the driver has actually handed this window. */
 	const frames = ref(0);
@@ -43,6 +50,7 @@ export function usePlaceholder(title, bodyRef) {
 	return {
 		title,
 		visible,
+		state,
 		source: 'windowCtx',
 		frames,
 		size,

@@ -608,8 +608,21 @@ driver. Dummy window contents.
   correctly declines to schedule, and nothing asks again.
 - [x] **Verified in a browser, not just in tests.** Over the same 1.5 seconds a
   hidden window gained **0** frames and the visible one gained **109**.
-- [ ] Settings window mounting `vue-settings-panel`
-- [ ] `onSerialize` / `onLayoutLoad` rider state per window
+- [x] `onSerialize` / `onLayoutLoad` rider state per window, via
+  `useWindowState`. The substance is not the hooks, it is that **restored state
+  is untrusted input**: it survived an upgrade, a user can hand-edit it, and an
+  older build may have meant something different by a field. A saved `"1"`
+  multiplies into a string; a saved `NaN` survives every operation and surfaces
+  as a blank view several layers away. A value is accepted only when it matches
+  the TYPE of the default it replaces, and numbers must be finite; anything else
+  falls back silently, which is the correct response to a field we cannot make
+  sense of.
+- [x] Verified in a browser: switch a tab, let the debounce settle, reload —
+  layout restored (5 frames) and the window's own state came back with it.
+- [ ] **Settings window mounting `vue-settings-panel`** — BLOCKED. The sibling
+  clone has no `dist/`, so it cannot be installed as a `file:` dependency yet.
+  It needs building in its own repo first (`npm install && npm run build`
+  there), and then adding to `package.json` here.
 
 **Verified by building the renderer and rendering it in a real browser**, which
 is the only thing that catches the failure below.
