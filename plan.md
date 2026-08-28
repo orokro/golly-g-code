@@ -319,28 +319,45 @@ optimization and is hard to follow"*, which it was.
 jscut's are broken: `separateTabs` lives in a gitignored emscripten blob whose
 CDN fallback is dead, and the JS fallback path has a return-type bug that emits
 `G1 XNaN YNaN`. Done differently, in pure JS — `src/core/cam/tabs.js`.
+
+**A tab is a BREAK in the cut**, not a ride-over at reduced depth. Greg: *"they
+should just be breaks in the cut placed wherever I want, i.e. the tool moves
+completely up to the safe zone above the work, moves across the tab, plunges
+back down, continues. That might not be the most optimal path, but eh its
+logical enough."* It is also much easier to reason about at the machine.
+
+**Tab depth is a depth**, measured down from the surface exactly like cut depth;
+what is left is whatever lies below it. Greg's worked example, which the tests
+are built on: 4mm stock cut 5mm into the spoilboard, 1mm passes, so five passes.
+A tab at 3mm leaves 1mm standing, and breaks only passes 4 and 5 — the first
+three run straight through it as if it were not there. A tab at 0 is never cut.
+
 - [x] Tab anchored as **normalized arc-length position on the source path**
 - [x] **Resolved onto the offset toolpath at generation time** by nearest-point
-  projection. Measured across cutters of 1, 3.175, 6 and 12mm diameter on a 40mm
-  arc: the bridge stays in the same place on the part and stays 8mm wide. jscut
-  anchors to the toolpath, so changing the cutter moves every tab and resizes it.
-- [x] Per-tab: depth, length along path (real units, not % — the jscut complaint)
-- [x] Splitting a toolpath into alternating over-tab / free spans, cut at the
-  exact span boundary rather than the nearest vertex, keeping interior vertices
-- [x] Tabs suppressed on passes shallower than the tab, where lifting would only
-  dent the wall of the cut
-- [x] Tests: tab position and width stable across tool-diameter changes
+  projection. Measured across cutters of 1, 3.175, 6 and 12mm diameter: the
+  bridge stays in the same place on the part and stays the same width. jscut
+  anchors to the toolpath, so changing the cutter moves and resizes every tab.
+- [x] **Per-tab length AND depth, each with a job default** — real units, not %
+- [x] `planPass(toolpath, spans, passZ)` returns the runs actually cut on one
+  pass; the gaps between them are the retract-rapid-plunge. How to leave and
+  re-enter the cut is left to the post-processor, since lead-ins (1.8) want a say
+- [x] Tabs suppressed on passes above them, where there is nothing to break
+- [x] Merged tabs take the SHALLOWER depth, so the most material survives
+- [x] Tests: position and width stable across tool-diameter changes; the whole
+  worked example above, pass by pass
 - [x] **The bridge is a wedge, and the length means the part edge.** At full
   depth the cutter touches the line at one point and never crosses it, so the
-  material standing at the part edge is exactly the lifted span — verified
-  against the full-depth toolpath rather than against the span arithmetic, for
-  three cutter sizes. Further into the kerf the disc reaches r ahead and behind,
-  so an L-long tab is L − 2r at the outer edge. At L = 2r it is a knife edge
-  holding nothing, which `placeTabs` now warns about.
+  material standing at the part edge is exactly the span — verified against the
+  full-depth toolpath, not against the span arithmetic. Further into the kerf
+  the disc reaches r ahead and behind, so an L-long tab is L − 2r at the outer
+  edge; at L = 2r it is a knife edge, which `placeTabs` warns about.
 - [x] Warns when a tab lands where the cutter cannot follow the line — in a
-  crevice narrower than the tool, the material is already uncut and the tab adds
-  nothing. Found on Greg's skyline: two of four tabs at the default positions.
-- [ ] Dragging a tab along the path in the Workspace (Phase 4)
+  crevice narrower than the tool the material is already uncut and the tab adds
+  nothing. Two of four default positions on Greg's skyline.
+- [ ] ~~Cutting each unbroken run to full depth before moving on~~ — would save
+  retracts. Greg: *"that's less interesting."* Not doing it.
+- [ ] Dragging a tab along the path, and editing its depth and length, in the
+  Workspace (Phase 4)
 
 ### 1.8 Quality features jscut lacks
 - [ ] **Dogbone / T-bone corner relief.** A round bit leaves a tool-radius fillet in inside corners; a square tenon won't seat. Detect corners below an angle threshold in the offset path, insert a corner arc. Per-job toggle + style picker

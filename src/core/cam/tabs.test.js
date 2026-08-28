@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { arcLengths, pointAt, projectOnto, placeTabs, splitAtTabs, tabZ } from './tabs.js';
+import { arcLengths, pointAt, projectOnto, placeTabs, planPass, tabBreaks } from './tabs.js';
 import { offsetAlongNormals, Side } from './openOffset.js';
+import { computeDepthPasses } from './depth.js';
 
 /** A gentle arc, so inside and outside toolpaths have genuinely different lengths. */
 const arc = (radius, sweep = Math.PI / 2, steps = 400) => {
@@ -133,70 +134,6 @@ describe('a tab is a width of material, not a length of toolpath', () => {
 });
 
 
-describe('splitting a toolpath at its tabs', () => {
-
-	it('alternates free and over-tab, covering the whole path exactly once', () => {
-		const path = [[0, 0], [100, 0]];
-		const runs = splitAtTabs(path, [{ start: 40, end: 50 }]);
-
-		expect(runs.map((r) => r.overTab)).toEqual([false, true, false]);
-		expect(runs.reduce((sum, r) => sum + lengthOf(r.points), 0)).toBeCloseTo(100, 9);
-
-		// each run picks up where the last left off
-		for (let i = 0; i + 1 < runs.length; i++)
-			expect(runs[i].points[runs[i].points.length - 1]).toEqual(runs[i + 1].points[0]);
-	});
-
-	it('cuts exactly at the span boundary, not at the nearest vertex', () => {
-		// the path's own vertices are 10mm apart; the tab is not
-		const path = [[0, 0], [10, 0], [20, 0], [30, 0]];
-		const runs = splitAtTabs(path, [{ start: 12.5, end: 17.5 }]);
-		expect(runs[1].points[0][0]).toBeCloseTo(12.5, 9);
-		expect(runs[1].points[runs[1].points.length - 1][0]).toBeCloseTo(17.5, 9);
-	});
-
-	it('keeps the original vertices inside each run, so the shape survives', () => {
-		const path = [[0, 0], [10, 10], [20, 0], [30, 10], [40, 0]];
-		const runs = splitAtTabs(path, [{ start: 5, end: 8 }]);
-		const rebuilt = runs.flatMap((r) => r.points);
-		for (const vertex of path)
-			expect(rebuilt.some(([x, y]) => Math.hypot(x - vertex[0], y - vertex[1]) < 1e-9),
-				`${vertex}`).toBe(true);
-	});
-
-	it('passes the path straight through when there are no tabs', () => {
-		const path = [[0, 0], [10, 0]];
-		expect(splitAtTabs(path, [])).toEqual([{ points: path, overTab: false }]);
-	});
-});
-
-
-describe('how deep to go over a tab', () => {
-
-	it('lifts to leave the tab standing once the pass is deeper than it', () => {
-		// 18mm stock, 3mm tabs: the top of a tab is 15mm down
-		const { z, engaged } = tabZ(-18, 3, 18);
-		expect(engaged).toBe(true);
-		expect(z).toBeCloseTo(-15, 9);
-	});
-
-	it('does not lift on passes shallower than the tab, which would just dent the wall', () => {
-		const { z, engaged } = tabZ(-6, 3, 18);
-		expect(engaged).toBe(false);
-		expect(z).toBeCloseTo(-6, 9);
-	});
-
-	it('treats a pass landing exactly on the tab top as not yet engaged', () => {
-		expect(tabZ(-15, 3, 18).engaged).toBe(false);
-	});
-
-	it('refuses a tab that does not fit in the material', () => {
-		expect(() => tabZ(-18, 20, 18)).toThrow(RangeError);
-		expect(() => tabZ(-18, 0, 18)).toThrow(RangeError);
-	});
-});
-
-
 describe('what the bridge actually measures', () => {
 
 	const TOLERANCE = 0.005;
@@ -243,5 +180,106 @@ describe('what the bridge actually measures', () => {
 		const { warnings } = placeTabs(source, source, [{ position: 0.5, length: 8 }],
 			{ toolRadius: 1.5875 });
 		expect(warnings).toEqual([]);
+	});
+});
+
+
+describe("a tab is a break in the cut — Greg's worked example", () => {
+
+	// 4mm stock, cut 5mm to go through into the spoilboard, 1mm passes, so five
+	// passes. A tab set to 3mm leaves 1mm of material standing under it. The
+	// first three passes cut straight through the tab; the last two break.
+	const THICKNESS = 4;
+	const CUT_DEPTH = 5;
+	const PASS = 1;
+	const passes = computeDepthPasses(CUT_DEPTH, PASS);
+
+	const toolpath = [[0, 0], [100, 0]];
+	const spans = [{ start: 46, end: 54, depth: 3 }];
+
+	it('cuts five passes to get through 4mm of stock into the spoilboard', () => {
+		expect(passes).toEqual([-1, -2, -3, -4, -5]);
+	});
+
+	it('runs the first three passes straight through the tab', () => {
+		for (const passZ of [-1, -2, -3]) {
+			const runs = planPass(toolpath, spans, passZ);
+			expect(runs, `${passZ}`).toHaveLength(1);
+			expect(runs[0].points).toEqual(toolpath);
+		}
+	});
+
+	it('breaks the last two passes into two runs with a gap over the tab', () => {
+		for (const passZ of [-4, -5]) {
+			const runs = planPass(toolpath, spans, passZ);
+			expect(runs, `${passZ}`).toHaveLength(2);
+			expect(runs[0].end).toBeCloseTo(46, 9);
+			expect(runs[1].start).toBeCloseTo(54, 9);
+			// and the gap really is left uncut
+			expect(runs[0].points[runs[0].points.length - 1][0]).toBeCloseTo(46, 9);
+			expect(runs[1].points[0][0]).toBeCloseTo(54, 9);
+		}
+	});
+
+	it('leaves exactly thickness minus tab depth standing', () => {
+		const deepest = passes.filter((z) => !tabBreaks(z, 3)).at(-1);
+		expect(deepest).toBe(-3);
+		expect(THICKNESS - 3).toBe(1);
+	});
+
+	it('never cuts a zero-depth tab at all', () => {
+		for (const passZ of passes)
+			expect(planPass(toolpath, [{ start: 46, end: 54, depth: 0 }], passZ), `${passZ}`)
+				.toHaveLength(2);
+	});
+
+	it('never breaks for a tab deeper than the cut', () => {
+		for (const passZ of passes)
+			expect(planPass(toolpath, [{ start: 46, end: 54, depth: 9 }], passZ), `${passZ}`)
+				.toHaveLength(1);
+	});
+});
+
+
+describe('per-tab depth and length, with job defaults', () => {
+
+	const source = [[0, 0], [200, 0]];
+
+	it('falls back to the job default for anything a tab does not set', () => {
+		const { spans } = placeTabs(source, source, [{ position: 0.5 }],
+			{ defaultLength: 10, defaultDepth: 2 });
+		expect(spans[0].end - spans[0].start).toBeCloseTo(10, 6);
+		expect(spans[0].depth).toBe(2);
+	});
+
+	it('lets a tab override either one', () => {
+		const { spans } = placeTabs(source, source,
+			[{ position: 0.25, length: 4 }, { position: 0.75, depth: 3.5 }],
+			{ defaultLength: 10, defaultDepth: 2 });
+		expect(spans[0].end - spans[0].start).toBeCloseTo(4, 6);
+		expect(spans[0].depth).toBe(2);
+		expect(spans[1].end - spans[1].start).toBeCloseTo(10, 6);
+		expect(spans[1].depth).toBe(3.5);
+	});
+
+	it('gives merged tabs the shallower depth, so the most material survives', () => {
+		const { spans } = placeTabs(source, source, [
+			{ position: 0.5, length: 20, depth: 3 },
+			{ position: 0.55, length: 20, depth: 1 },
+		]);
+		expect(spans).toHaveLength(1);
+		expect(spans[0].depth).toBe(1);
+	});
+
+	it('rejects a negative depth', () => {
+		expect(() => placeTabs(source, source, [{ position: 0.5, depth: -1 }])).toThrow(RangeError);
+	});
+
+	it('makes tabs of different depths break on different passes', () => {
+		const { spans } = placeTabs(source, source,
+			[{ position: 0.25, depth: 1 }, { position: 0.75, depth: 3 }]);
+
+		expect(planPass(source, spans, -2)).toHaveLength(2);
+		expect(planPass(source, spans, -4)).toHaveLength(3);
 	});
 });

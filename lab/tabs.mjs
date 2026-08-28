@@ -18,7 +18,7 @@ import path from 'node:path';
 import { importSvgDocument } from '../src/core/svg/document.js';
 import { flattenSubPath } from '../src/core/path/flatten.js';
 import { offsetAlongNormals, Side } from '../src/core/cam/openOffset.js';
-import { arcLengths, placeTabs, splitAtTabs, tabZ } from '../src/core/cam/tabs.js';
+import { arcLengths, placeTabs, planPass, tabBreaks } from '../src/core/cam/tabs.js';
 import { computeDepthPasses } from '../src/core/cam/depth.js';
 
 const input = process.argv[2];
@@ -29,39 +29,51 @@ if (input === undefined) {
 	process.exit(1);
 }
 
-const THICKNESS = 18;
-const TAB_HEIGHT = 3;
-const TAB_LENGTH = 8;
-const PASS_DEPTH = 6;
+// Greg's worked example: 4mm stock cut 5mm to go through into the spoilboard,
+// 1mm passes. Tabs at mixed depths so the different break-points are visible.
+const THICKNESS = 4;
+const CUT_DEPTH = 5;
+const PASS_DEPTH = 1;
+const SAFE_Z = 2;
 const RADII = [0.5, 1.5875, 3, 6];
-const TABS = [0.15, 0.4, 0.62, 0.85].map((position) => ({ position, length: TAB_LENGTH }));
+const TABS = [
+	{ position: 0.15, length: 8, depth: 3 },
+	{ position: 0.4, length: 8, depth: 3 },
+	{ position: 0.62, length: 12, depth: 1 },
+	{ position: 0.85, length: 8, depth: 0 },
+];
 
 const SOURCE = '#3d4a52';
 const CUT = '#7ee081';
 const TAB = '#e8b64c';
 
 const d = (pts) => 'M' + pts.map(([x, y]) => `${x.toFixed(3)} ${y.toFixed(3)}`).join('L');
-const lengthOf = (p) => arcLengths(p)[p.length - 1];
 
 /**
- * Plan view of one toolpath with its tabs picked out.
+ * Plan view of one toolpath, showing where the deepest pass is broken.
  *
  * @param {Array<Number[]>} source - the source path
- * @param {Array<Object>} runs - the split toolpath
+ * @param {Array<Object>} runs - the runs cut on the deepest pass
+ * @param {Array<Number[]>} toolpath - the whole toolpath, for the gaps
  * @param {Object} box - shared bounds
  * @returns {String} an `<svg>`
  */
-function planView(source, runs, box) {
+function planView(source, runs, toolpath, box) {
 
 	const pad = 9;
 	const view = [box.minX - pad, box.minY - pad,
 		(box.maxX - box.minX) + (pad * 2), (box.maxY - box.minY) + (pad * 2)];
 	const hair = Math.max(view[2], view[3]) / 900;
 
-	const body = [`<path d="${d(source)}" fill="none" stroke="${SOURCE}" stroke-width="${hair * 1.4}"/>`]
-		.concat(runs.map(({ points, overTab }) =>
-			`<path d="${d(points)}" fill="none" stroke="${overTab ? TAB : CUT}"`
-			+ ` stroke-width="${hair * (overTab ? 4.5 : 2.2)}" stroke-linecap="round"/>`))
+	const body = [
+		`<path d="${d(source)}" fill="none" stroke="${SOURCE}" stroke-width="${hair * 1.4}"/>`,
+		// the whole toolpath faint, so the breaks read as gaps in something
+		`<path d="${d(toolpath)}" fill="none" stroke="${TAB}" stroke-width="${hair * 4.5}"`
+		+ ' opacity="0.55" stroke-linecap="round"/>',
+	]
+		.concat(runs.map(({ points }) =>
+			`<path d="${d(points)}" fill="none" stroke="${CUT}"`
+			+ ` stroke-width="${hair * 2.2}" stroke-linecap="round"/>`))
 		.join('');
 
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${view.join(' ')}">
@@ -69,42 +81,56 @@ function planView(source, runs, box) {
 }
 
 /**
- * Z the tool holds along the path, for every depth pass — a side elevation.
+ * Side elevation: where the tool is at cutting depth, pass by pass.
  *
- * @param {Array<Object>} runs - the split toolpath
+ * The vertical hops are the breaks — retract to safe Z, rapid across the tab,
+ * plunge, carry on. Everything a plan view cannot show about a tab is here.
+ *
+ * @param {Array<Number[]>} toolpath - the toolpath
+ * @param {Array<Object>} spans - the tab spans
  * @param {Number[]} passes - Z of each depth pass
  * @returns {String} an `<svg>`
  */
-function depthView(runs, passes) {
+function depthView(toolpath, spans, passes) {
 
-	const total = runs.reduce((sum, r) => sum + lengthOf(r.points), 0);
-	const view = [0, -THICKNESS - 2, total, THICKNESS + 4];
+	const total = arcLengths(toolpath)[toolpath.length - 1];
+
+	// 5mm of depth across half a metre of path is a flat line. Z is exaggerated
+	// so the passes and the breaks are separable; X stays true to scale, and the
+	// caption says so rather than letting the picture imply a shape it does not
+	// have.
+	const zoom = (total / 14) / (CUT_DEPTH + SAFE_Z);
+	const z = (value) => value * zoom;
+
+	const view = [0, z(-CUT_DEPTH) - z(1), total, z(CUT_DEPTH + SAFE_Z) + z(2)];
 	const hair = total / 900;
 
-	const stock = `<rect x="0" y="${-THICKNESS}" width="${total}" height="${THICKNESS}"`
+	const stock = `<rect x="0" y="${z(-THICKNESS)}" width="${total}" height="${z(THICKNESS)}"`
 		+ ` fill="#1d1d22" stroke="#2a2a33" stroke-width="${hair}"/>`;
 
+	// what is left standing under each tab
+	const bridges = spans.map(({ start, end, depth }) =>
+		`<rect x="${start}" y="${z(-THICKNESS)}" width="${end - start}"`
+		+ ` height="${z(Math.max(0, THICKNESS - depth))}" fill="${TAB}" opacity="0.45"/>`).join('');
+
 	const lines = passes.map((passZ) => {
-		const pts = [];
-		let at = 0;
-		for (const { points, overTab } of runs) {
-			const run = lengthOf(points);
-			const { z } = overTab ? tabZ(passZ, TAB_HEIGHT, THICKNESS) : { z: passZ };
-			pts.push([at, z], [at + run, z]);
-			at += run;
-		}
-		return `<path d="${d(pts)}" fill="none" stroke="${CUT}" stroke-width="${hair * 1.8}"/>`;
+		const runs = planPass(toolpath, spans, passZ);
+		const pts = [[0, z(SAFE_Z)]];
+		for (const { start, end } of runs)
+			pts.push([start, z(SAFE_Z)], [start, z(passZ)], [end, z(passZ)], [end, z(SAFE_Z)]);
+		pts.push([total, z(SAFE_Z)]);
+		return `<path d="${d(pts)}" fill="none" stroke="${CUT}" stroke-width="${hair * 1.4}"/>`;
 	}).join('');
 
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${view.join(' ')}">
-<g transform="translate(0 ${(view[1] * 2) + view[3]}) scale(1 -1)">${stock}${lines}</g></svg>`;
+<g transform="translate(0 ${(view[1] * 2) + view[3]}) scale(1 -1)">${stock}${bridges}${lines}</g></svg>`;
 }
 
 const { shapes } = importSvgDocument(fs.readFileSync(input, 'utf8'), {
 	pixelsPerInch: Number(process.env.DPI ?? 96),
 });
 
-const passes = computeDepthPasses(THICKNESS, PASS_DEPTH);
+const passes = computeDepthPasses(CUT_DEPTH, PASS_DEPTH);
 const sections = [];
 
 for (const shape of shapes) {
@@ -123,7 +149,7 @@ for (const shape of shapes) {
 				continue;
 
 			const { spans, warnings } = placeTabs(source, toolpath, TABS, { toolRadius: radius });
-			const runs = splitAtTabs(toolpath, spans);
+			const deepest = planPass(toolpath, spans, passes[passes.length - 1]);
 
 			const all = [...source, ...toolpath];
 			const box = {
@@ -131,14 +157,17 @@ for (const shape of shapes) {
 				minY: Math.min(...all.map((p) => p[1])), maxY: Math.max(...all.map((p) => p[1])),
 			};
 
-			const widths = spans.map((s) => (s.end - s.start).toFixed(2)).join(', ');
+			const detail = spans.map(({ start, end, depth }) => {
+				const breaksOn = passes.filter((z) => tabBreaks(z, depth)).length;
+				return `${(end - start).toFixed(1)}mm at ${depth}mm deep`
+					+ ` (breaks ${breaksOn} of ${passes.length} passes,`
+					+ ` leaves ${(THICKNESS - depth).toFixed(1)}mm standing)`;
+			}).join('; ');
 
 			panels.push(`<figure><figcaption><b>${(radius * 2).toFixed(3)} mm tool</b><br>
-<span>${spans.length} tabs. The tool is lifted for ${widths} mm of travel to leave each
-${TAB_LENGTH} mm bridge — less than ${TAB_LENGTH} where the line doubles back inside the
-cut, more where it bows outward.`
+<span>${detail}`
 			+ `${warnings.length ? `<br><b class="warn">${warnings.join('<br>')}</b>` : ''}</span></figcaption>
-${planView(source, runs, box)}${depthView(runs, passes)}</figure>`);
+${planView(source, deepest, toolpath, box)}${depthView(toolpath, spans, passes)}</figure>`);
 		}
 
 		if (panels.length > 0)
@@ -163,12 +192,16 @@ fs.writeFileSync(output, `<!DOCTYPE html><html><head><meta charset="utf-8">
  b.warn{color:#e0798f;font-weight:400}
 </style></head><body>
 <h1>Holding tabs — ${path.basename(input)}</h1>
-<p class="lead">${TABS.length} tabs, ${TAB_LENGTH} mm wide and ${TAB_HEIGHT} mm tall, in
-${THICKNESS} mm stock cut in ${passes.length} passes. The same four tabs at four tool
-diameters: they must not move and must not change width, because a tab is a piece of the
-PART. <b class="cut">Green</b> is cutting, <b class="tab">amber</b> is riding over a tab.
-The strip below each plan view is the Z the tool holds along the path — a plan view alone
-cannot show a tab.</p>
+<p class="lead">${THICKNESS} mm stock cut ${CUT_DEPTH} mm — through, into the spoilboard —
+in ${passes.length} passes of ${PASS_DEPTH} mm. Four tabs at mixed depths, so they break
+different passes: two at 3 mm, one at 1 mm, one at 0 mm which is never cut at all.
+A tab is a <b>break</b>: full retract, rapid across, plunge, carry on.
+<br><br>Plan view: <b class="cut">green</b> is cut on the deepest pass,
+<b class="tab">amber</b> is the gaps left. Side elevation: the stock, the
+<b class="tab">material standing</b> under each tab, and the tool's Z for every pass —
+each hop is a break. Z is exaggerated in that strip, since ${CUT_DEPTH} mm of depth across
+half a metre of path is otherwise a flat line; X is true to scale. The same tabs are shown at four cutter diameters, because a tab is a
+piece of the PART and must not move or resize when the cutter changes.</p>
 ${sections.join('')}
 </body></html>`);
 

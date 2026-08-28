@@ -12,6 +12,28 @@
  * which means a tab is a REGION rather than a position, and its size is
  * expressed as a fraction rather than in millimetres.
  *
+ * ## A tab is a BREAK in the cut
+ *
+ * Not a ride-over at reduced depth. The tool retracts fully to safe Z, rapids
+ * across the tab, plunges, and carries on. Greg's call: *"they should just be
+ * breaks in the cut placed wherever I want... that might not be the most optimal
+ * path, but eh its logical enough."* It is also far easier to reason about at
+ * the machine, and it keeps the cutter out of the tab entirely rather than
+ * skimming its top.
+ *
+ * **Tab depth is a depth**, measured down from the material surface exactly like
+ * cut depth, and the material left under the tab is whatever is below it. In
+ * 4mm stock cut to 5mm (into the spoilboard) with 1mm passes, a tab at 3mm
+ * leaves 1mm of material standing. A tab at 0 is never cut at all.
+ *
+ * A tab therefore only breaks the passes that would cut BELOW it. That same job
+ * runs its first three passes straight through the tab as if it were not there,
+ * and breaks only on the fourth and fifth.
+ *
+ * (Cutting each unbroken run between tabs to full depth before moving to the
+ * next — rather than a pass at a time across the whole path — would save
+ * retracts. Greg: *"that's less interesting."* Not done.)
+ *
  * ## Where a tab lives
  *
  * A tab is anchored to the **source path**, as a normalised position along its
@@ -152,18 +174,22 @@ export function projectOnto(path, point, lengths = arcLengths(path)) {
  *
  * @param {Array<Number[]>} source - the path the tabs are anchored to
  * @param {Array<Number[]>} toolpath - the offset path the tool will follow
- * @param {Array<Object>} tabs - each `{ position, length }`, position normalised
- *   0..1 along the source, length in millimetres
+ * @param {Array<Object>} tabs - each `{ position, length, depth }`; position is
+ *   normalised 0..1 along the source, length and depth are millimetres, and
+ *   length and depth each fall back to the job default when not given
  * @param {Object} [options] - options
+ * @param {Number} [options.defaultLength=6] - length for tabs that do not set one
+ * @param {Number} [options.defaultDepth=0] - depth for tabs that do not set one;
+ *   zero means the tab is never cut into at all
  * @param {Number} [options.toolRadius] - cutter radius; supplied only so a tab
  *   too narrow to leave a bridge can be reported. It does not move anything
- * @returns {Object} `{ spans, warnings }` — spans are `{ start, end }` arc
- *   lengths along the TOOLPATH, sorted and non-overlapping
+ * @returns {Object} `{ spans, warnings }` — spans are `{ start, end, depth }`,
+ *   arc lengths along the TOOLPATH, sorted and non-overlapping
  * @throws {RangeError} when a tab is malformed
  */
 export function placeTabs(source, toolpath, tabs, options = {}) {
 
-	const { toolRadius } = options;
+	const { toolRadius, defaultLength = 6, defaultDepth = 0 } = options;
 
 	const warnings = [];
 
@@ -179,13 +205,18 @@ export function placeTabs(source, toolpath, tabs, options = {}) {
 
 	for (const tab of tabs) {
 
-		const { position, length } = tab;
+		const { position } = tab;
+		const length = tab.length ?? defaultLength;
+		const depth = tab.depth ?? defaultDepth;
 
 		if (!(position >= 0 && position <= 1))
 			throw new RangeError(`tab position must be within 0..1, got ${position}`);
 
 		if (!(length > 0))
 			throw new RangeError(`tab length must be positive, got ${length}`);
+
+		if (!(depth >= 0))
+			throw new RangeError(`tab depth must be zero or more, got ${depth}`);
 
 		if (toolRadius > 0 && length <= toolRadius * 2)
 			warnings.push(`a ${length}mm tab is not wider than the ${(toolRadius * 2).toFixed(3)}mm`
@@ -215,7 +246,11 @@ export function placeTabs(source, toolpath, tabs, options = {}) {
 			warnings.push(`the tab at ${position} sits where the cutter cannot follow the line;`
 				+ ' the material there is already uncut, so the tab adds nothing');
 
-		raw.push({ start: Math.min(a.distance, b.distance), end: Math.max(a.distance, b.distance) });
+		raw.push({
+			start: Math.min(a.distance, b.distance),
+			end: Math.max(a.distance, b.distance),
+			depth,
+		});
 	}
 
 	// merge overlaps: two tabs sharing material are one bridge
@@ -224,10 +259,14 @@ export function placeTabs(source, toolpath, tabs, options = {}) {
 	const spans = [];
 	for (const span of raw) {
 		const last = spans[spans.length - 1];
-		if (last !== undefined && span.start <= last.end)
+		if (last !== undefined && span.start <= last.end) {
 			last.end = Math.max(last.end, span.end);
-		else
+			// the shallower of the two wins: a merged tab leaves the most material
+			// either of them asked for, rather than the least
+			last.depth = Math.min(last.depth, span.depth);
+		} else {
 			spans.push({ ...span });
+		}
 	}
 
 	if (spans.length > 0 && spans.length < raw.length)
@@ -242,58 +281,70 @@ export function placeTabs(source, toolpath, tabs, options = {}) {
 
 
 /**
- * Splits a toolpath into alternating free and over-tab runs.
+ * Whether a tab breaks the cut on a given pass.
  *
- * The split points are real vertices inserted at the span boundaries, so the
- * tool reaches full depth exactly where the tab ends rather than at whichever
- * vertex happened to be nearby.
+ * A tab only matters once the pass would take the cutter below it. Passes above
+ * it run straight through as if it were not there.
  *
- * @param {Array<Number[]>} toolpath - the path to split
- * @param {Array<Object>} spans - `{ start, end }` arc lengths, sorted and merged
- * @returns {Array<Object>} `{ points, overTab }` runs, in travel order, together
- *   covering the whole toolpath
+ * @param {Number} passZ - Z of this depth pass, negative below the surface
+ * @param {Number} depth - the tab's depth from the surface, positive millimetres
+ * @param {Number} [topZ=0] - Z of the material surface
+ * @returns {Boolean} true if the path must break here on this pass
  */
-export function splitAtTabs(toolpath, spans) {
+export function tabBreaks(passZ, depth, topZ = 0) {
+
+	if (!(depth >= 0))
+		throw new RangeError(`tab depth must be zero or more, got ${depth}`);
+
+	return passZ < topZ - depth;
+}
+
+
+/**
+ * The runs of toolpath actually cut on one depth pass.
+ *
+ * Everything not returned is a gap: retract to safe Z, rapid across, plunge, and
+ * pick up at the next run. The gaps are left implicit rather than described,
+ * because how to leave and re-enter the cut is the post-processor's business
+ * (and lead-ins, 1.8, will want a say).
+ *
+ * A pass above every tab comes back as the whole toolpath in one run, which is
+ * the common case for the first few passes of a deep cut.
+ *
+ * @param {Array<Number[]>} toolpath - the path for this pass
+ * @param {Array<Object>} spans - `{ start, end, depth }`, sorted and merged
+ * @param {Number} passZ - Z of this pass, negative below the surface
+ * @param {Object} [options] - options
+ * @param {Number} [options.topZ=0] - Z of the material surface
+ * @returns {Array<Object>} `{ points, start, end }` runs to cut, in travel order
+ */
+export function planPass(toolpath, spans, passZ, options = {}) {
+
+	const { topZ = 0 } = options;
 
 	if (toolpath.length < 2)
-		return toolpath.length === 0 ? [] : [{ points: [...toolpath], overTab: false }];
+		return toolpath.length === 0 ? [] : [{ points: [...toolpath], start: 0, end: 0 }];
 
 	const lengths = arcLengths(toolpath);
 	const total = lengths[lengths.length - 1];
 
-	// every boundary, clamped into the path and in order
-	const cuts = [];
-	for (const { start, end } of spans) {
-		if (end <= 0 || start >= total)
-			continue;
-		cuts.push(Math.max(0, start), Math.min(total, end));
-	}
+	const breaking = spans
+		.filter(({ depth }) => tabBreaks(passZ, depth, topZ))
+		.map(({ start, end }) => ({ start: Math.max(0, start), end: Math.min(total, end) }))
+		.filter(({ start, end }) => end > start);
 
-	if (cuts.length === 0)
-		return [{ points: [...toolpath], overTab: false }];
+	if (breaking.length === 0)
+		return [{ points: [...toolpath], start: 0, end: total }];
 
-	const marks = [0, ...cuts, total];
 	const runs = [];
+	let at = 0;
 
-	for (let i = 0; i + 1 < marks.length; i++) {
+	for (const gap of [...breaking, { start: total, end: total }]) {
 
-		const from = marks[i];
-		const to = marks[i + 1];
+		if (gap.start > at)
+			runs.push(cutRun(toolpath, lengths, at, gap.start));
 
-		if (to - from <= 0)
-			continue;
-
-		const points = [pointAt(toolpath, from, lengths)];
-
-		// the original vertices strictly inside this run, so the shape is kept
-		for (let v = 0; v < toolpath.length; v++)
-			if (lengths[v] > from && lengths[v] < to)
-				points.push([...toolpath[v]]);
-
-		points.push(pointAt(toolpath, to, lengths));
-
-		// runs alternate: the first is free, then over a tab, and so on
-		runs.push({ points, overTab: i % 2 === 1 });
+		at = Math.max(at, gap.end);
 	}
 
 	return runs;
@@ -301,31 +352,24 @@ export function splitAtTabs(toolpath, spans) {
 
 
 /**
- * Z the tool should hold over a tab, for one depth pass.
+ * One run of toolpath between two arc lengths, with exact ends.
  *
- * Returns the pass depth unchanged while the pass is still shallower than the
- * top of the tab: there is nothing to step over yet, and lifting anyway would
- * put a bump in the wall of the cut for no reason.
- *
- * @param {Number} passZ - Z of this depth pass, negative below the surface
- * @param {Number} tabHeight - height of material left under the tool, millimetres
- * @param {Number} materialThickness - stock thickness, millimetres
- * @param {Number} [topZ=0] - Z of the material surface
- * @returns {Object} `{ z, engaged }` — the Z to hold over the tab, and whether
- *   the tab affects this pass at all
- * @throws {RangeError} when the tab is taller than the material
+ * @param {Array<Number[]>} toolpath - the path
+ * @param {Number[]} lengths - its cumulative arc lengths
+ * @param {Number} from - arc length to start at
+ * @param {Number} to - arc length to stop at
+ * @returns {Object} `{ points, start, end }`
  */
-export function tabZ(passZ, tabHeight, materialThickness, topZ = 0) {
+function cutRun(toolpath, lengths, from, to) {
 
-	if (!(tabHeight > 0))
-		throw new RangeError(`tab height must be positive, got ${tabHeight}`);
+	const points = [pointAt(toolpath, from, lengths)];
 
-	if (tabHeight > materialThickness)
-		throw new RangeError(`a ${tabHeight}mm tab does not fit in ${materialThickness}mm of material`);
+	// the path's own vertices strictly inside the run, so the shape is kept
+	for (let v = 0; v < toolpath.length; v++)
+		if (lengths[v] > from && lengths[v] < to)
+			points.push([...toolpath[v]]);
 
-	const tabTop = topZ - materialThickness + tabHeight;
+	points.push(pointAt(toolpath, to, lengths));
 
-	return passZ < tabTop
-		? { z: tabTop, engaged: true }
-		: { z: passZ, engaged: false };
+	return { points, start: from, end: to };
 }
