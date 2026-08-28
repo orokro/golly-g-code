@@ -166,6 +166,28 @@ export function cssVariables(palette) {
  * A test that checks two things we wrote against each other proves they are
  * consistent, not that either is correct.
  *
+ * The mapping below was then written from the KEY NAMES, which is the same
+ * mistake wearing a different hat. Read against the library's shipped
+ * stylesheet, several of the names mean the opposite of what they say:
+ *
+ *   `categoryHeaderColor`     is the category TITLE's text colour (and its
+ *                             icon), NOT a header background. It is also the
+ *                             background of an active Select chip and of a tag
+ *                             badge, both of which hard-code white text on it.
+ *   `subcategoryHeaderColor`  likewise: the subcategory TITLE's text colour.
+ *   `categoryTextColor` (mc)  the category DESCRIPTION under the title.
+ *   `categoryColor` (lc)      the category names down the side.
+ *
+ * Set to surface colours -- which is what the names suggest -- they render as
+ * dark-grey text on dark grey, which is precisely what the panel did.
+ *
+ * Eleven of the eighteen keys the library documents are dead: it sets the
+ * variable and no rule reads it. They are still filled in here, because the
+ * library is ours and a later version may well start reading them, but they are
+ * marked, so nobody tunes a colour that cannot appear on screen. The keys that
+ * ARE read are pinned by a test that parses the shipped stylesheet, so a rename
+ * upstream fails loudly instead of silently falling back to the light defaults.
+ *
  * @param {Palette} palette - the palette
  * @returns {Object} the `themeColors` prop for `<VueSettingsPanel>`
  */
@@ -174,11 +196,11 @@ export function settingsPanelTheme(palette) {
 	return {
 
 		leftColumn: {
-			bgColor: palette.surfaceRaised,
-			categoriesBoxBgColor: 'transparent',
-			categoriesBoxBorder: 'none',
-			categoryColor: palette.text,
-			categoryTextColor: palette.text,
+			bgColor: palette.surfaceRaised,                  // unread; see SettingsWindow.vue
+			categoriesBoxBgColor: 'transparent',             // unread
+			categoriesBoxBorder: 'none',                     // unread
+			categoryColor: palette.text,                     // the category names
+			categoryTextColor: palette.text,                 // unread
 			selectedCategoryBgColor: palette.accent,
 			selectedCategoryTextColor: palette.accentText,
 			searchBgColor: palette.surfaceSunken,
@@ -187,22 +209,22 @@ export function settingsPanelTheme(palette) {
 		},
 
 		mainColumn: {
-			bgColor: palette.surface,
-			textColor: palette.text,
-			categoryHeaderColor: palette.surfaceRaised,
-			categoryHeaderTextColor: palette.text,
+			bgColor: palette.surface,                        // unread
+			textColor: palette.text,                         // unread
+			categoryHeaderColor: palette.accent,             // the category TITLE
+			categoryHeaderTextColor: palette.accentText,     // unread
 			categoryBorder: `1px solid ${palette.border}`,
-			categoryBgColor: palette.surface,
-			categoryTextColor: palette.text,
-			settingsRowBgColor: 'transparent',
+			categoryBgColor: palette.surfaceRaised,
+			categoryTextColor: palette.textMuted,            // the category description
+			settingsRowBgColor: 'transparent',               // unread
 			settingsRowNameColor: palette.text,
 			settingsRowDescColor: palette.textMuted,
-			settingsRowBorder: `1px solid ${palette.border}`,
-			subcategoryHeaderColor: palette.surfaceSunken,
-			subcategoryHeaderTextColor: palette.text,
-			subcategoryBorder: 'none',
-			subcategoryBgColor: palette.surface,
-			subCategoryTextColor: palette.text,
+			settingsRowBorder: `1px solid ${palette.border}`,  // unread
+			subcategoryHeaderColor: palette.text,            // the subcategory TITLE
+			subcategoryHeaderTextColor: palette.accentText,  // unread
+			subcategoryBorder: `1px solid ${palette.border}`,
+			subcategoryBgColor: palette.surfaceSunken,
+			subCategoryTextColor: palette.text,              // unread
 			attentionColor: palette.accent,
 		},
 

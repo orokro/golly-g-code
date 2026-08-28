@@ -40,13 +40,15 @@
 
 <script setup>
 
-import { ref, shallowRef, computed, provide, onMounted, onBeforeUnmount, watchEffect } from 'vue';
+import { ref, computed, reactive, provide, onMounted, onBeforeUnmount, watchEffect } from 'vue';
 import { WindowManager } from 'vue-win-mgr';
+import { createSettings } from 'vue-settings-panel';
 
 import AppHeader from './AppHeader.vue';
 import AppStatusBar from './AppStatusBar.vue';
 
 import { availableWindows, windowSlugs } from './windows/registry.js';
+import { settingsSpec } from './settings/spec.js';
 import { defaultLayout } from './layout/defaultLayout.js';
 import { createLayoutStore } from './composables/layoutStore.js';
 import { createRenderDriver } from './composables/renderDriver.js';
@@ -55,8 +57,35 @@ import { presets, windowManagerTheme, applyPalette } from './theme/palette.js';
 /** @type {import('vue').Ref} The manager component, for imperative resets. */
 const managerEl = ref(null);
 
-/** The active palette. Shallow: a palette is replaced wholesale, never edited. */
-const palette = shallowRef(presets.dark);
+/**
+ * Every application setting, live.
+ *
+ * `createSettings` fills the spec's defaults into a `reactive` object, so this
+ * is the one place an application setting exists. The Settings window is given
+ * THIS object rather than a copy of it: the panel writes straight into it, and
+ * anything derived from it here updates without a synchronising step.
+ *
+ * That matters because the first version had two -- a palette ref here and a
+ * settings object inside the window -- and neither could see the other. The
+ * header button restyled the app but not the panel; the panel's own theme
+ * picker did nothing and reported the wrong value. Both were the same bug.
+ *
+ * The `reactive` wrapper is belt and braces: it is a no-op on something that
+ * is already reactive, and it is the difference between a loud failure and a
+ * silently dead UI if the library ever stops returning one.
+ */
+const settings = reactive(createSettings(settingsSpec));
+provide('appSettings', settings);
+
+/**
+ * The active palette, DERIVED from the theme setting rather than stored.
+ *
+ * Derived so there is nothing to keep in step: whoever writes `settings.theme`
+ * -- the header, the panel, or a restored project later -- moves the whole app.
+ * An unrecognised name falls back to dark rather than leaving the app unstyled.
+ */
+const palette = computed(() => presets[settings.theme] ?? presets.dark);
+provide('palette', palette);
 
 /** What the status bar says on the left. */
 const hint = ref('');
@@ -101,9 +130,15 @@ function resetLayout() {
 	managerEl.value?.loadLayout?.(defaultLayout());
 }
 
-/** Switches presets, from the header button. */
+/**
+ * Switches presets, from the header button.
+ *
+ * Writes the SETTING, not the palette -- the palette is derived from it, so
+ * setting the palette directly would be overwritten on the next recompute and
+ * would leave the Settings panel showing the old theme.
+ */
 function toggleTheme() {
-	palette.value = palette.value.dark ? presets.light : presets.dark;
+	settings.theme = palette.value.dark ? 'light' : 'dark';
 }
 
 onMounted(() => {
