@@ -318,13 +318,29 @@ optimization and is hard to follow"*, which it was.
 ### 1.7 Tabs (holding tabs)
 jscut's are broken: `separateTabs` lives in a gitignored emscripten blob whose
 CDN fallback is dead, and the JS fallback path has a return-type bug that emits
-`G1 XNaN YNaN`. We do it differently and in pure JS.
-- [ ] Tab anchored as **normalized arc-length position on the source path**
-- [ ] **Resolved onto the offset toolpath at generation time** by nearest-point projection — so changing tool diameter never drifts a tab
-- [ ] Per-tab: depth, length along path (real units, not % — the jscut complaint)
-- [ ] Splitting a toolpath into alternating over-tab / free spans, with correct Z transitions
-- [ ] Tabs suppressed on passes shallower than tab height
-- [ ] Tests: tab count/position stable across tool-diameter changes
+`G1 XNaN YNaN`. Done differently, in pure JS — `src/core/cam/tabs.js`.
+- [x] Tab anchored as **normalized arc-length position on the source path**
+- [x] **Resolved onto the offset toolpath at generation time** by nearest-point
+  projection. Measured across cutters of 1, 3.175, 6 and 12mm diameter on a 40mm
+  arc: the bridge stays in the same place on the part and stays 8mm wide. jscut
+  anchors to the toolpath, so changing the cutter moves every tab and resizes it.
+- [x] Per-tab: depth, length along path (real units, not % — the jscut complaint)
+- [x] Splitting a toolpath into alternating over-tab / free spans, cut at the
+  exact span boundary rather than the nearest vertex, keeping interior vertices
+- [x] Tabs suppressed on passes shallower than the tab, where lifting would only
+  dent the wall of the cut
+- [x] Tests: tab position and width stable across tool-diameter changes
+- [x] **The bridge is a wedge, and the length means the part edge.** At full
+  depth the cutter touches the line at one point and never crosses it, so the
+  material standing at the part edge is exactly the lifted span — verified
+  against the full-depth toolpath rather than against the span arithmetic, for
+  three cutter sizes. Further into the kerf the disc reaches r ahead and behind,
+  so an L-long tab is L − 2r at the outer edge. At L = 2r it is a knife edge
+  holding nothing, which `placeTabs` now warns about.
+- [x] Warns when a tab lands where the cutter cannot follow the line — in a
+  crevice narrower than the tool, the material is already uncut and the tab adds
+  nothing. Found on Greg's skyline: two of four tabs at the default positions.
+- [ ] Dragging a tab along the path in the Workspace (Phase 4)
 
 ### 1.8 Quality features jscut lacks
 - [ ] **Dogbone / T-bone corner relief.** A round bit leaves a tool-radius fillet in inside corners; a square tenon won't seat. Detect corners below an angle threshold in the offset path, insert a corner arc. Per-job toggle + style picker
