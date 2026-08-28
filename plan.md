@@ -35,6 +35,7 @@ mid-build. If one of these turns out wrong, change it *here* first.
 | D13 | **Inspector is scratch-built.** `vue-settings-panel` is only for app-level settings. | The panel supports one nesting level and its `validate()` is cosmetic. The Inspector needs gizmo linkage and real validation. |
 | D14 | **`cam-core` lives in the renderer**, optionally inside a Web Worker. | Worker `postMessage` needs no preload bridge. "Headless" only means it must not import Vue or touch the DOM, so vitest can run it. |
 | D15 | **No V-carve in v1.** | No V-bit owned. Needs a medial-axis/Voronoi computation. The Job model must allow adding an operation kind without surgery. |
+| D17 | **The kerf is the artwork; we are not freeing a part.** Greg: *"My main goal is to make the bit follow the path I drew, and the width of the cut will show me what detail I'll actually get IRL... I realize there's more detail that would be able to be cut by a 1/8th bit - but I don't really care."* | Reframes several things. Detail finer than the bit is a normal consequence to SEE, not a warning to emit. "Is the part held" is the wrong question — nothing is being cut free. Tabs are hand-placed on straight sections by eye, so no automatic placement and no reasoning about tabs in crevices. What the program owes the user is an honest picture of the cut's width. |
 | D16 | **No spoilboard guardrail.** Model an explicit **cut-through allowance** instead. | Current workflow deliberately cuts into a pre-routed spoilboard groove (vinyl records, O-flute, single pass). Warn only past `thickness + allowance`. |
 
 ### Repo layout
@@ -361,12 +362,9 @@ three run straight through it as if it were not there. A tab at 0 is never cut.
   bridge LARGER, not smaller. An end in a crevice says nothing about the bridge.
 - [x] `measureBridges(source, runs, toolRadius)` replaces the guess with the
   measurement: sweep the cutter along the runs actually cut and report the
-  stretches of source it never reaches. Answers the question a person really has
-  — "is my part held, and by what?" — instead of a proxy for it. It reports ALL
-  standing material, not just tabs: on that skyline at 3.175mm there are **35
-  bridges of 3mm or more**, holding 345mm of a 528mm edge, because the drawing
-  has far more detail than the cutter can enter. The part was never in danger of
-  coming loose; if anything it is barely being cut out at all.
+  stretches of source it never reaches. It reports ALL standing material, not
+  just tabs. Kept because it is the honest version of the question, but see
+  D17 — it is a diagnostic, not something to warn about.
   Distance is measured to the run SEGMENTS, not to samples along them. Sampling
   looks equivalent and is not — the toolpath runs tangent to the source, so a
   radial error of e becomes a longitudinal error of sqrt(2·r·e) at every bridge

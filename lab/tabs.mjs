@@ -36,11 +36,14 @@ const CUT_DEPTH = 5;
 const PASS_DEPTH = 1;
 const SAFE_Z = 2;
 const RADII = [0.5, 1.5875, 3, 6];
+// Hand-picked, on straight-ish stretches, which is how they get placed for real
+// (D17) -- not spread evenly by position. Mixed depths so the different
+// break-points are visible.
 const TABS = [
-	{ position: 0.15, length: 8, depth: 3 },
-	{ position: 0.4, length: 8, depth: 3 },
-	{ position: 0.62, length: 12, depth: 1 },
-	{ position: 0.85, length: 8, depth: 0 },
+	{ position: 0.055, length: 8, depth: 3 },
+	{ position: 0.30, length: 8, depth: 3 },
+	{ position: 0.52, length: 12, depth: 1 },
+	{ position: 0.955, length: 8, depth: 0 },
 ];
 
 const SOURCE = '#3d4a52';
