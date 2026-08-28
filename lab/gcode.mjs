@@ -40,6 +40,7 @@ const CUT_DEPTH = 5;
 const PASS_DEPTH = 1;
 const SAFE_Z = 5;
 const ARC_TOLERANCE = Number(process.env.ARCTOL ?? 0.01);
+const RAMP_ANGLE = (3 * Math.PI) / 180;
 // No tabs by default. Greg on the skyline: "In reality, for the skyline both
 // parts of the material (upper and lower) will be clamped down, and the pass
 // will go completely through with zero tabs." Tabs are hand-placed on the Job in
@@ -88,7 +89,11 @@ const plan = { safeZ: SAFE_Z, jobs, program: { name: path.basename(input) } };
 const dialect = grbl({ units: 'mm', decimals: Number(process.env.DEC ?? 3) });
 
 const straight = emitText(plan, { dialect });
-const { text, warnings, stats } = emitText(plan, { dialect, arcTolerance: ARC_TOLERANCE });
+const { text, warnings, stats } = emitText(plan, {
+	dialect,
+	arcTolerance: ARC_TOLERANCE,
+	ramp: process.env.NORAMP ? undefined : { angleRadians: RAMP_ANGLE },
+});
 
 fs.writeFileSync(output, text);
 
@@ -97,7 +102,7 @@ console.log(`${input} -> ${output}`);
 console.log(`  document ${viewport.physical.width.toFixed(1)} x ${viewport.physical.height.toFixed(1)} mm`);
 console.log(`  ${jobs.length} jobs, ${passes.length} passes each, ${THICKNESS}mm stock cut ${CUT_DEPTH}mm`);
 console.log(`  ${lines} lines, ${stats.rapids} rapids, ${stats.cuts} straight cuts,`
-	+ ` ${stats.arcs} arcs, ${stats.plunges} plunges`);
+	+ ` ${stats.arcs} arcs, ${stats.plunges} plunges, ${stats.ramps} ramps`);
 console.log(`  ${(text.length / 1024).toFixed(1)} KiB`);
 console.log(`  without arc fitting: ${straight.stats.cuts} cuts,`
 	+ ` ${(straight.text.length / 1024).toFixed(1)} KiB`

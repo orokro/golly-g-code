@@ -397,9 +397,40 @@ three run straight through it as if it were not there. A tab at 0 is never cut.
   Workspace (Phase 4)
 
 ### 1.8 Quality features jscut lacks
-- [ ] **Dogbone / T-bone corner relief.** A round bit leaves a tool-radius fillet in inside corners; a square tenon won't seat. Detect corners below an angle threshold in the offset path, insert a corner arc. Per-job toggle + style picker
-- [ ] **Lead-in / lead-out.** Tangential entry arc so the plunge happens in scrap rather than dwelling on the finished edge (this one likely matters most for vinyl with an O-flute)
-- [ ] **Ramp plunge** — port jscut's time-budget ramp: walk forward along the path until round-trip distance exceeds `cutFeed × (Δz / plungeFeed)`, interpolate Z over the there-and-back
+`src/core/cam/entry.js`. Both the ramp and the leads exist for one reason: an
+end mill cutting straight down is doing the thing it is worst at. Most have poor
+or no centre-cutting geometry, so a vertical plunge rubs rather than cuts, heats
+the tip, and marks the one spot the tool dwells longest.
+
+- [x] **Ramp plunge.** Travel along the line descending, then come back,
+  arriving at the start at full depth. The there-and-back matters: a
+  forward-only ramp reaches depth some way along, leaving the first stretch
+  shallow — and on the final pass that stretch never gets cut. Distance is the
+  larger of two limits so both hold: the angle the tool can manage, and the
+  distance covered in the time a straight plunge would have taken (jscut's idea,
+  and a good one — below it the ramp is free). Ramping starts from the pass
+  above, not from safe Z, and rapids down to it, since that stretch is air or
+  kerf already cut.
+- [x] **Lead-in / lead-out.** Tangential arc onto the start of the cut, so the
+  tool is already moving along the finished edge when it reaches it. Matters
+  most for vinyl with an O-flute.
+- [x] **Which side the lead comes from is a PARAMETER, never a guess.** An open
+  path has no interior and the program cannot know which side is scrap. Greg:
+  *"we probably should have some kind of UI as well for picking where the leads
+  go (its not obvious what will be considered scrap automatically)."* Nothing in
+  `entry.js` tries to detect it.
+- [ ] Lead placement UI — side, length, sweep, per job (Phase 4)
+- [ ] **Dogbone / T-bone corner relief.** A round bit leaves a tool-radius
+  fillet in inside corners; a square tenon will not seat. Least relevant under
+  D17, where the kerf is the artwork rather than a part being freed, so it stays
+  a per-job toggle that may never be switched on.
+
+Measured on painted_ladies_v001.svg, 4mm stock cut 5mm in 5 passes:
+
+| | vertical entries | lines |
+|---|---|---|
+| plunging | 10 | 1875 |
+| ramping at 3° | **0** | 2275 |
 
 ### 1.9 Arc fitting → G2/G3 **[the biggest cut-quality win over jscut]**
 `src/core/path/fit.js` refits a polyline as lines and arcs; the post-processor

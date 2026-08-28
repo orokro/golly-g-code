@@ -509,3 +509,66 @@ describe('arcs', () => {
 		}
 	});
 });
+
+
+describe('ramping in rather than plunging', () => {
+
+	const line = [[0, 0], [200, 0]];
+	const planFor = () => ({
+		safeZ: 5,
+		jobs: [{
+			name: 'Ramped', tool: { number: 1, rpm: 12000 },
+			feeds: { cut: 900, plunge: 300 },
+			passes: [{ z: -1, runs: [line] }, { z: -2, runs: [line] }],
+		}],
+	});
+
+	it('plunges straight down when no ramp is asked for', () => {
+		const { stats } = emitProgram(planFor());
+		expect(stats.plunges).toBe(2);
+		expect(stats.ramps).toBe(0);
+	});
+
+	it('replaces every plunge with a ramp when one is', () => {
+		const { stats } = emitProgram(planFor(), { ramp: { angleRadians: 3 * Math.PI / 180 } });
+		expect(stats.plunges).toBe(0);
+		expect(stats.ramps).toBe(2);
+	});
+
+	it('never moves straight down in X-Y once ramping', () => {
+		// the whole point: no vertical entry into material anywhere
+		const { text } = emitText(planFor(), { ramp: { angleRadians: 3 * Math.PI / 180 } });
+		for (const move of read(text)) {
+			if (move.rapid || move.establishes)
+				continue;
+			const descends = move.to.z < move.from.z;
+			const travels = move.shifted('x') || move.shifted('y');
+			expect(descends && !travels, JSON.stringify({ from: move.from, to: move.to })).toBe(false);
+		}
+	});
+
+	it('arrives at the start of the cut at full depth, so nothing is left shallow', () => {
+		const { text } = emitText(planFor(), { ramp: { angleRadians: 3 * Math.PI / 180 } });
+		const moves = read(text).filter((m) => !m.rapid && !m.establishes);
+
+		// the first pass ends its ramp back at X0 at Z-1
+		const arrival = moves.find((m) => Math.abs(m.to.z + 1) < 1e-9 && Math.abs(m.to.x) < 1e-6);
+		expect(arrival).toBeDefined();
+	});
+
+	it('only descends from the pass above, not from safe Z', () => {
+		// ramping the full way from safe Z would spend most of the ramp in air
+		const { text } = emitText(planFor(), { ramp: { angleRadians: 3 * Math.PI / 180 } });
+		const moves = read(text).filter((m) => !m.rapid && !m.establishes);
+		const deepest = moves.filter((m) => m.to.z < -1);
+		for (const move of deepest)
+			expect(move.from.z).toBeLessThanOrEqual(0 + 1e-9);
+	});
+
+	it('reports a path too short to ramp gently rather than silently steepening', () => {
+		const stub = { ...planFor() };
+		stub.jobs = [{ ...stub.jobs[0], passes: [{ z: -5, runs: [[[0, 0], [2, 0]]] }] }];
+		const { warnings } = emitProgram(stub, { ramp: { angleRadians: 3 * Math.PI / 180 } });
+		expect(warnings.join(' ')).toMatch(/ramp/);
+	});
+});

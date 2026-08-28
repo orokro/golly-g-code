@@ -25,6 +25,7 @@
 
 import { grbl } from './grbl.js';
 import { fitArcs } from '../path/fit.js';
+import { rampEntry } from '../cam/entry.js';
 
 /** Where the tool is assumed to be before the program starts: nowhere known. */
 const UNKNOWN = Object.freeze({ x: NaN, y: NaN, z: NaN });
@@ -44,12 +45,14 @@ const UNKNOWN = Object.freeze({ x: NaN, y: NaN, z: NaN });
  * @param {Number} [options.spindleDwell=2] - seconds to let the spindle spin up
  * @param {Number} [options.arcTolerance] - refit runs as arcs within this
  *   deviation, in millimetres, and emit G2/G3. Omit to emit straight moves only
+ * @param {Object} [options.ramp] - descend into each cut along the path instead
+ *   of straight down; `{ angleRadians }`. Omit to plunge vertically
  * @returns {Object} `{ lines, warnings, stats }`
  * @throws {RangeError} when the plan is unusable
  */
 export function emitProgram(plan, options = {}) {
 
-	const { dialect = grbl(), spindleDwell = 2, arcTolerance } = options;
+	const { dialect = grbl(), spindleDwell = 2, arcTolerance, ramp } = options;
 	const { safeZ, jobs = [] } = plan;
 
 	if (!Number.isFinite(safeZ))
@@ -67,7 +70,7 @@ export function emitProgram(plan, options = {}) {
 
 	const lines = [];
 	const warnings = [];
-	const stats = { rapids: 0, cuts: 0, arcs: 0, plunges: 0, toolChanges: 0 };
+	const stats = { rapids: 0, cuts: 0, arcs: 0, plunges: 0, ramps: 0, toolChanges: 0 };
 
 	let at = { ...UNKNOWN };
 	let feedRate = null;
@@ -138,6 +141,23 @@ export function emitProgram(plan, options = {}) {
 		at = { ...at, ...to };
 	};
 
+	/**
+	 * Where a ramp starts descending from: just clear of the previous pass.
+	 *
+	 * Ramping from safe Z would waste most of the ramp in fresh air. A pass only
+	 * has to descend from wherever the pass above it finished.
+	 *
+	 * @param {Object} pass - the pass being cut
+	 * @returns {Number} Z to begin the ramp at
+	 */
+	const topOf = (pass) => {
+		const above = jobs
+			.flatMap((job) => job.passes ?? [])
+			.map((other) => other.z)
+			.filter((z) => z > pass.z);
+		return above.length > 0 ? Math.min(...above) : Math.min(safeZ, plan.topZ ?? 0);
+	};
+
 	put(dialect.comment(`${plan.program?.name ?? 'GollyGCode'} — ${dialect.name}`));
 	put(dialect.preamble());
 
@@ -185,8 +205,33 @@ export function emitProgram(plan, options = {}) {
 				// up, across, down — never across at depth
 				rapidTo({ z: safeZ });
 				rapidTo({ x: points[0][0], y: points[0][1] });
-				feedTo({ z: pass.z }, plunge);
-				stats.plunges++;
+
+				if (ramp === undefined) {
+
+					feedTo({ z: pass.z }, plunge);
+					stats.plunges++;
+
+				} else {
+
+					// Descend along the line rather than into it. The ramp goes
+					// out and comes back, so it finishes at the start of the run
+					// at full depth and the cut proper still runs the whole path.
+					const from = topOf(pass);
+					const entry = rampEntry(points, from, pass.z, {
+						...ramp, cutFeed: cut, plungeFeed: plunge,
+					});
+					warnings.push(...entry.warnings.map((w) => `job '${name}': ${w}`));
+
+					// Drop to where the ramp begins first, and rapid to get
+					// there: that stretch is air, or kerf the pass above already
+					// cut, so feeding down it is time spent cutting nothing.
+					rapidTo({ z: from });
+
+					for (const [x, y, z] of entry.points)
+						feedTo({ x, y, z }, cut);
+
+					stats.ramps++;
+				}
 
 				if (arcTolerance === undefined) {
 					for (const [x, y] of points.slice(1))
