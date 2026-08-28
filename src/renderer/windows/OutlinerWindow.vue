@@ -2,24 +2,32 @@
 	@file OutlinerWindow.vue
 	@description Phase 2 stand-in for the Outliner window.
 
-	Dummy contents on purpose: the shell is what is being built and tested here,
-	not this. It reports its own visibility because that is the flag the render
-	driver skips work on, and a fault in it would otherwise surface much later as
-	an unexplained warm laptop.
+	The contents are a placeholder; the instrumentation is not. It registers with
+	the app's single render driver and counts the frames it is handed, so a
+	hidden window whose count keeps climbing is visible as a bug rather than only
+	as a warm laptop. See windows/_placeholder.js.
 -->
 <template>
-	<div class="placeholder" :class="{ hidden: !visible }">
+	<div ref="body" class="placeholder">
 		<h2>{{ title }}</h2>
 		<p>The document tree — imported SVGs, their paths, and the jobs made from them.</p>
-		<p class="state">window manager reports: <b>{{ visible ? 'visible' : 'hidden' }}</b></p>
+		<dl>
+			<dt>visible</dt><dd :class="{ on: visible }">{{ visible ? 'yes' : 'no' }} <span class="src">via {{ source }}</span></dd>
+			<dt>frames</dt><dd class="count">{{ frames }}</dd>
+			<dt>size</dt><dd>{{ sizeLabel }}</dd>
+		</dl>
 	</div>
 </template>
 
 <script setup>
 
+import { ref } from 'vue';
 import { usePlaceholder } from './_placeholder.js';
 
-const { title, visible } = usePlaceholder('Outliner');
+/** @type {import('vue').Ref} The root element, for size and visibility. */
+const body = ref(null);
+
+const { title, visible, source, frames, sizeLabel } = usePlaceholder('Outliner', body);
 
 </script>
 
@@ -42,13 +50,37 @@ const { title, visible } = usePlaceholder('Outliner');
 	}
 
 	.placeholder p {
-		margin: 0 0 8px;
+		margin: 0 0 12px;
 		max-width: 60ch;
 		color: var(--gg-text-muted);
 	}
 
-	.placeholder .state b {
+	dl {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 2px 12px;
+		margin: 0;
+		font-size: 12px;
+	}
+
+	dt {
+		color: var(--gg-text-muted);
+	}
+
+	dd {
+		margin: 0;
+	}
+
+	dd.on {
+		color: var(--gg-cut);
+	}
+
+	dd.count {
 		color: var(--gg-accent);
+	}
+
+	.src {
+		color: var(--gg-text-muted);
 	}
 
 </style>

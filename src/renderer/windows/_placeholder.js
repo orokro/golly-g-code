@@ -2,30 +2,54 @@
  * @file _placeholder.js
  * @description Shared innards for the Phase 2 stand-in windows.
  *
- * Phase 2's goal is the shell: the layout, the theme, persistence and the render
- * driver, with dummy window contents. These stand-ins exist so the shell can be
- * exercised — dragged, split, tabbed, saved, reloaded — before any of the real
- * views exist.
+ * Phase 2's goal is the shell, with dummy window contents. But "dummy" here does
+ * one real job: each stand-in registers with the app's render driver and counts
+ * the frames it is given, and reports its own visibility and measured size.
  *
- * Each one shows what it is and whether the window manager currently considers
- * it visible, because that flag is what the render driver keys off and a bug in
- * it would otherwise only show up later as a mysteriously warm laptop.
+ * That turns the three pieces this phase is really about — `useVisible`,
+ * `useResize` and the render driver — into something observable. A hidden window
+ * whose frame count keeps climbing is the exact bug the driver exists to
+ * prevent, and it has no other symptom than a warm laptop. Here you can watch it
+ * stop.
  */
 
-import { inject, computed } from 'vue';
+import { ref, computed } from 'vue';
+import { useResize } from '../composables/useResize.js';
+import { useRenderLoop } from '../composables/useRenderLoop.js';
 
 /**
- * Wires a placeholder up to its window context.
+ * Wires a placeholder up to the shell.
  *
  * @param {String} title - what to show
- * @returns {Object} `{ title, visible }` for the template
+ * @param {Object} bodyRef - a template ref on the window's root element
+ * @returns {Object} bindings for the template
  */
-export function usePlaceholder(title) {
+export function usePlaceholder(title, bodyRef) {
 
-	const windowCtx = inject('windowCtx', null);
+	/** How many frames the driver has actually handed this window. */
+	const frames = ref(0);
+
+	/** The last usable size, or null while hidden. */
+	const size = ref(null);
+
+	useResize(bodyRef, (measured) => { size.value = measured; });
+
+	// One loop for the whole app, provided by App.vue. It skips this callback
+	// entirely while the window is hidden, which is what the frame count makes
+	// visible -- a hidden window whose count keeps climbing is the bug.
+	const { visible } = useRenderLoop(() => { frames.value++; },
+		{ label: title, elementRef: bodyRef });
 
 	return {
 		title,
-		visible: computed(() => windowCtx?.isVisible?.value ?? true),
+		visible,
+		source: 'windowCtx',
+		frames,
+		size,
+		sizeLabel: computed(() => (size.value === null
+			? 'no usable size (hidden)'
+			: `${size.value.width}×${size.value.height} css, `
+				+ `${size.value.bufferWidth}×${size.value.bufferHeight} buffer `
+				+ `@${size.value.pixelRatio}×`)),
 	};
 }

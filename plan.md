@@ -591,10 +591,23 @@ driver. Dummy window contents.
   window hidden behind a tab INSIDE the manager is not, so a Three.js view in a
   background tab keeps rendering at 60fps into a canvas nobody can see.
   Deliberately framework-free so it can be tested against a fake clock.
-- [ ] `useVisible()` composable wrapping `windowCtx.isVisible`, with an
-  `IntersectionObserver` fallback if the patched build isn't present
-- [ ] `useResize()` composable — guard against 0×0 (hidden `display:none`
-  elements report zero, and a naive `setSize()` gives a NaN projection matrix)
+- [x] `useVisible()` wrapping `windowCtx.isVisible`, with an
+  `IntersectionObserver` fallback and a `source` saying which is in use. The
+  tempting fallback is "assume visible", which restores exactly the problem the
+  flag prevents while looking fine — the only symptom is a warm laptop, which
+  nobody reports as a bug.
+- [x] `useResize()` — refuses 0×0 rather than passing it on. A hidden element
+  reports zero, `setSize(0,0)` gives an aspect of NaN, a projection matrix of
+  NaN, and a scene that silently vanishes and never returns, because nothing
+  recomputes it: the size did not change, it was wrong once. Also clamps the
+  device pixel ratio, since a 3× buffer costs nine times the fill rate of a 1×
+  one and this has to stay usable on a 2017 MacBook.
+- [x] `useRenderLoop()` — joins a view to the driver AND wakes it on becoming
+  visible. Without the wake the loop never starts at all: views register during
+  setup, before anything is laid out, so everything reports hidden, the driver
+  correctly declines to schedule, and nothing asks again.
+- [x] **Verified in a browser, not just in tests.** Over the same 1.5 seconds a
+  hidden window gained **0** frames and the visible one gained **109**.
 - [ ] Settings window mounting `vue-settings-panel`
 - [ ] `onSerialize` / `onLayoutLoad` rider state per window
 
