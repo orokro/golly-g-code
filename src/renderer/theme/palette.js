@@ -152,26 +152,78 @@ export function cssVariables(palette) {
 		'--gg-stock': palette.stock,
 	};
 
-	// vue-settings-panel's grouped variables: `lc` for its label column, `mc`
-	// for the main content. Derived rather than chosen, so a preset cannot
-	// disagree with itself.
-	const settingsPanel = {
-		'--lc-bg-color': palette.surfaceRaised,
-		'--lc-text-color': palette.text,
-		'--lc-border-color': palette.border,
-		'--lc-hover-bg-color': palette.surface,
-		'--lc-active-bg-color': palette.accent,
-		'--lc-active-text-color': palette.accentText,
+	return own;
+}
 
-		'--mc-bg-color': palette.surface,
-		'--mc-text-color': palette.text,
-		'--mc-muted-text-color': palette.textMuted,
-		'--mc-border-color': palette.border,
-		'--mc-input-bg-color': palette.surfaceSunken,
-		'--mc-accent-color': palette.accent,
+
+/**
+ * `vue-settings-panel`'s `themeColors` prop, derived from a palette.
+ *
+ * An earlier version of this file invented a set of `--lc-*` and `--mc-*` CSS
+ * variables from a description of how the library themes itself, and a test
+ * asserted they agreed with our own variables. They did agree. The library does
+ * not read them: it takes a NESTED OBJECT and injects its own variables from it.
+ * A test that checks two things we wrote against each other proves they are
+ * consistent, not that either is correct.
+ *
+ * @param {Palette} palette - the palette
+ * @returns {Object} the `themeColors` prop for `<VueSettingsPanel>`
+ */
+export function settingsPanelTheme(palette) {
+
+	return {
+
+		leftColumn: {
+			bgColor: palette.surfaceRaised,
+			categoriesBoxBgColor: 'transparent',
+			categoriesBoxBorder: 'none',
+			categoryColor: palette.text,
+			categoryTextColor: palette.text,
+			selectedCategoryBgColor: palette.accent,
+			selectedCategoryTextColor: palette.accentText,
+			searchBgColor: palette.surfaceSunken,
+			searchXColor: palette.textMuted,
+			searchTextColor: palette.text,
+		},
+
+		mainColumn: {
+			bgColor: palette.surface,
+			textColor: palette.text,
+			categoryHeaderColor: palette.surfaceRaised,
+			categoryHeaderTextColor: palette.text,
+			categoryBorder: `1px solid ${palette.border}`,
+			categoryBgColor: palette.surface,
+			categoryTextColor: palette.text,
+			settingsRowBgColor: 'transparent',
+			settingsRowNameColor: palette.text,
+			settingsRowDescColor: palette.textMuted,
+			settingsRowBorder: `1px solid ${palette.border}`,
+			subcategoryHeaderColor: palette.surfaceSunken,
+			subcategoryHeaderTextColor: palette.text,
+			subcategoryBorder: 'none',
+			subcategoryBgColor: palette.surface,
+			subCategoryTextColor: palette.text,
+			attentionColor: palette.accent,
+		},
+
+		toggle: {
+			bgColor: palette.surfaceSunken,
+			thumbColor: palette.text,
+			activeBgColor: palette.accent,
+		},
+
+		input: {
+			borderColor: palette.border,
+			bgColor: palette.surfaceSunken,
+			textColor: palette.text,
+			focusBorderColor: palette.accent,
+		},
+
+		range: {
+			thumbColor: palette.accent,
+			trackColor: palette.border,
+		},
 	};
-
-	return { ...own, ...settingsPanel };
 }
 
 

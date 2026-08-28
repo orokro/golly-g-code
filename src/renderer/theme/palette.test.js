@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { presets, dark, light, windowManagerTheme, cssVariables, applyPalette } from './palette.js';
+import { presets, dark, light, windowManagerTheme, settingsPanelTheme, cssVariables, applyPalette } from './palette.js';
 
 const ROLES = Object.keys(dark).filter((k) => k !== 'name' && k !== 'dark');
 
@@ -54,12 +54,9 @@ describe('deriving the window manager theme', () => {
 
 describe('CSS variables', () => {
 
-	it('cover both conventions from one palette', () => {
-		const vars = cssVariables(dark);
-		// ours, plus the settings panel's two groups
-		expect(Object.keys(vars).some((k) => k.startsWith('--gg-'))).toBe(true);
-		expect(Object.keys(vars).some((k) => k.startsWith('--lc-'))).toBe(true);
-		expect(Object.keys(vars).some((k) => k.startsWith('--mc-'))).toBe(true);
+	it('are all ours, and all prefixed', () => {
+		for (const name of Object.keys(cssVariables(dark)))
+			expect(name, name).toMatch(/^--gg-/);
 	});
 
 	it('never leaves a variable undefined', () => {
@@ -68,12 +65,13 @@ describe('CSS variables', () => {
 				expect(value, `${palette.name} ${name}`).toBeTruthy();
 	});
 
-	it('keeps the two conventions agreeing about the same surface', () => {
-		// the drift this module exists to prevent: the settings panel's content
+	it('agree with the settings panel about the same surface', () => {
+		// the drift this module exists to prevent: the panel's content
 		// background must BE the window surface, not a colour that resembles it
 		const vars = cssVariables(light);
-		expect(vars['--mc-bg-color']).toBe(vars['--gg-surface']);
-		expect(vars['--lc-bg-color']).toBe(vars['--gg-surface-raised']);
+		const panel = settingsPanelTheme(light);
+		expect(panel.mainColumn.bgColor).toBe(vars['--gg-surface']);
+		expect(panel.leftColumn.bgColor).toBe(vars['--gg-surface-raised']);
 	});
 });
 
@@ -110,5 +108,36 @@ describe('applying a palette', () => {
 
 	it('does nothing rather than throwing when there is no document', () => {
 		expect(() => applyPalette(dark, null)).not.toThrow();
+	});
+});
+
+
+describe('the settings panel theme', () => {
+
+	// This is a NESTED OBJECT the library takes as a prop, not CSS variables we
+	// set. An earlier version of palette.js invented `--lc-*` and `--mc-*`
+	// variable names from a description of the library and tested that they
+	// agreed with our own — which they did, and proved nothing, because the
+	// library never reads them.
+
+	it('fills every group the library defines, and nothing else', async () => {
+		const { defaultTheme } = await import('vue-settings-panel');
+		const ours = settingsPanelTheme(dark);
+
+		expect(Object.keys(ours).sort()).toEqual(Object.keys(defaultTheme).sort());
+
+		for (const [group, fields] of Object.entries(defaultTheme))
+			expect(Object.keys(ours[group]).sort(), group).toEqual(Object.keys(fields).sort());
+	});
+
+	it('leaves no field undefined, in either preset', () => {
+		for (const palette of Object.values(presets))
+			for (const [group, fields] of Object.entries(settingsPanelTheme(palette)))
+				for (const [key, value] of Object.entries(fields))
+					expect(value, `${palette.name}.${group}.${key}`).toBeTruthy();
+	});
+
+	it('changes with the preset', () => {
+		expect(settingsPanelTheme(dark)).not.toEqual(settingsPanelTheme(light));
 	});
 });

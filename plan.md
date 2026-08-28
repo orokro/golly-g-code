@@ -619,10 +619,34 @@ driver. Dummy window contents.
   sense of.
 - [x] Verified in a browser: switch a tab, let the debounce settle, reload —
   layout restored (5 frames) and the window's own state came back with it.
-- [ ] **Settings window mounting `vue-settings-panel`** — BLOCKED. The sibling
-  clone has no `dist/`, so it cannot be installed as a `file:` dependency yet.
-  It needs building in its own repo first (`npm install && npm run build`
-  there), and then adding to `package.json` here.
+- [x] **Settings window mounting `vue-settings-panel`** — installed from npm
+  (`^0.0.5`); the sibling clone was only ever reference. The spec lives in
+  `settings/spec.js` as data so the defaults can be asserted, and only
+  APPLICATION settings go in it — stock thickness or work zero carried between
+  projects is how a 4mm job gets cut at 18mm depths.
+- [x] The palette drives the panel too, via its `themeColors` prop.
+
+**Two bugs here, both the same shape, and both found by looking rather than by
+testing.** `palette.js` had invented a set of `--lc-*` / `--mc-*` CSS variables
+from a description of how the library themes itself, and a test asserted they
+agreed with our own variables. They did agree. The library never reads them — it
+takes a nested object. Then the settings spec passed `{label, value}` objects to
+a Select, and its test read `options.map(o => o.value)` — the same wrong shape —
+so it passed while the panel rendered `{ "label": "Millimetres", "value": "mm" }`
+into the field. **A test that encodes the same assumption as the code it checks
+confirms they agree, not that either is right.** Both are now checked against the
+library itself: the theme against its exported `defaultTheme` keys, the spec
+through its own `createSettings`.
+
+**Note on `vue-win-mgr`:** it stays a `file:` dependency. The npm release does
+not yet carry the `isVisible`, `onVisibilityChange` and `layout-changed` patches
+this app is built on, so switching to the published version would silently break
+the render driver and layout persistence.
+
+**Also worth knowing:** `vue-settings-panel`'s stylesheet is 2.5MB, of which
+2.42MB is ten base64-embedded fonts. It takes the app's CSS from 86KB to 2.59MB.
+Nothing here is broken by it, and in Electron it loads from disk, but it is
+parsed at every start and it inflates the package.
 
 **Verified by building the renderer and rendering it in a real browser**, which
 is the only thing that catches the failure below.

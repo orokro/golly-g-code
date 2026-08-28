@@ -1,87 +1,71 @@
 <!--
 	@file SettingsWindow.vue
-	@description Phase 2 stand-in for the Settings window.
+	@description Application settings, via vue-settings-panel.
 
-	The contents are a placeholder; the instrumentation is not. It registers with
-	the app's single render driver and counts the frames it is handed, so a
-	hidden window whose count keeps climbing is visible as a bug rather than only
-	as a warm laptop. See windows/_placeholder.js.
+	The spec lives in settings/spec.js so it can be asserted on its own. This
+	file is the mounting, the theme derivation, and the one interesting bit: the
+	panel is a second library with its own styling convention, so it is the real
+	test of whether the palette actually drives everything or merely looks like
+	it does.
 -->
 <template>
-	<div ref="body" class="placeholder">
-		<h2>{{ title }}</h2>
-		<p>vue-settings-panel — units, theme, grid, decimal places.</p>
-		<dl>
-			<dt>visible</dt><dd :class="{ on: visible }">{{ visible ? 'yes' : 'no' }} <span class="src">via {{ source }}</span></dd>
-			<dt>frames</dt><dd class="count">{{ frames }}</dd>
-			<dt>size</dt><dd>{{ sizeLabel }}</dd>
-			<dt>visits</dt><dd class="count">{{ state.visits }} <span class="src">rides along with the saved layout</span></dd>
-		</dl>
+	<div ref="body" class="settingsWindow">
+		<VueSettingsPanel
+			:settings="settings"
+			:specification="settingsSpec"
+			:themeColors="panelTheme"
+			@settings-changed="onChanged"
+		/>
 	</div>
 </template>
 
 <script setup>
 
-import { ref } from 'vue';
-import { usePlaceholder } from './_placeholder.js';
+import { ref, computed, inject } from 'vue';
+import { VueSettingsPanel, createSettings } from 'vue-settings-panel';
 
-/** @type {import('vue').Ref} The root element, for size and visibility. */
+import { settingsSpec } from '../settings/spec.js';
+import { settingsPanelTheme, presets } from '../theme/palette.js';
+
+/** @type {import('vue').Ref} The root element. */
 const body = ref(null);
 
-const { title, visible, source, frames, sizeLabel, state } = usePlaceholder('Settings', body);
+/** The live settings object, filled from the spec's defaults. */
+const settings = createSettings(settingsSpec);
+
+/**
+ * The app's palette, provided by App.vue.
+ *
+ * Injected rather than imported so the panel restyles with the rest of the app
+ * instead of holding its own opinion, which is the drift the palette module
+ * exists to prevent.
+ */
+const palette = inject('palette', null);
+
+const panelTheme = computed(() => settingsPanelTheme(palette?.value ?? presets.dark));
+
+/** Lets the app act on a setting the moment it changes. */
+const applySetting = inject('applySetting', null);
+
+/**
+ * Passes changes up. Nothing is persisted here yet — that is Phase 3, along
+ * with the rest of the project/application split.
+ *
+ * @param {Object} changed - the settings object after the change
+ */
+function onChanged(changed) {
+	applySetting?.(changed);
+}
 
 </script>
 
 <style scoped>
 
-	.placeholder {
+	.settingsWindow {
 		box-sizing: border-box;
 		height: 100%;
-		padding: 14px 16px;
-		color: var(--gg-text);
 		background: var(--gg-surface);
-		font: 13px/1.6 ui-monospace, Menlo, Consolas, monospace;
-		overflow: auto;
-	}
-
-	.placeholder h2 {
-		margin: 0 0 6px;
-		font-size: 13px;
-		font-weight: 600;
-	}
-
-	.placeholder p {
-		margin: 0 0 12px;
-		max-width: 60ch;
-		color: var(--gg-text-muted);
-	}
-
-	dl {
-		display: grid;
-		grid-template-columns: auto 1fr;
-		gap: 2px 12px;
-		margin: 0;
-		font-size: 12px;
-	}
-
-	dt {
-		color: var(--gg-text-muted);
-	}
-
-	dd {
-		margin: 0;
-	}
-
-	dd.on {
-		color: var(--gg-cut);
-	}
-
-	dd.count {
-		color: var(--gg-accent);
-	}
-
-	.src {
-		color: var(--gg-text-muted);
+		overflow: hidden;
 	}
 
 </style>

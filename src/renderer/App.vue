@@ -101,7 +101,7 @@ function resetLayout() {
 	managerEl.value?.loadLayout?.(defaultLayout());
 }
 
-/** Switches presets. */
+/** Switches presets, from the header button. */
 function toggleTheme() {
 	palette.value = palette.value.dark ? presets.light : presets.dark;
 }

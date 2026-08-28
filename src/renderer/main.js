@@ -15,6 +15,9 @@ import { createApp } from 'vue';
 // see the file header: this is what positions the frames
 import 'vue-win-mgr/dist/style.css';
 
+// the settings panel ships its own stylesheet too, for the same reason
+import 'vue-settings-panel/dist/style.css';
+
 import App from './App.vue';
 import './style.css';
 
