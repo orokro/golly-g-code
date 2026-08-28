@@ -227,9 +227,22 @@ complaint. It also ignores `viewBox` entirely.
 ### 1.5 Open-path operations **[RISK — prototype before the UI exists]**
 This is the single highest-unknown item in the plan. jscut has nothing here —
 it force-closes open paths, which is the bug that motivated the project.
+An open path has no enclosed area, so inside / outside / centre — all defined
+relative to one — do not apply. Three operations stand in for them, reachable
+through one entry point, `openToolpath`, because choosing between them is what a
+person does while dialling a job in. Greg: *"This will allow me to, in the final
+app, experiment with bit sizes, offset amounts, and etc to dial in a tool path
+that is a reasonable shape even if the source SVG is higher frequency detail than
+would be possible to reproduce."*
+- [x] **Centre.** Tool centre on the line; the cut straddles it, half a diameter
+  each side. The only mode that follows the drawing verbatim.
 - [x] **System A: heading offset.** Displace the whole path along one fixed angle. Trivial geometry; the work is the UI knob (Phase 4)
-- [x] **System B: path-normal offset.** Compute the 2D normal at every point and displace along it. Self-intersects on concave curves, spreads on convex ones
+- [x] **System B: path-normal offset.** Follows the shape, and puts the drawn
+  line on one EDGE of the cut rather than up its middle
 - [x] **Side A / side B** selector
+- [x] `openToolpath(points, { mode, distance, side, angleRadians })` — one call,
+  one field to change between them. Note `distance` is the tool RADIUS for a cut
+  whose edge lands on the line, not its diameter.
 - [x] ~~**"Clean" slider.**~~ **Removed — there is nothing to tune.** The first
   implementation built the offset by hand (arcs outward, mitres inward) and then
   discarded folded points, on the observation that a folded point ends up closer to

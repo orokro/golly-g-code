@@ -22,12 +22,41 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { importSvgDocument } from '../src/core/svg/document.js';
 import { flattenSubPath } from '../src/core/path/flatten.js';
-import { offsetAlongNormals, Side } from '../src/core/cam/openOffset.js';
+import { openToolpath, OpenMode, Side } from '../src/core/cam/openOffset.js';
 import { offsetOpen, OpenEnd } from '../src/core/geometry/clipper.js';
 
 const input = process.argv[2];
 const output = process.argv[3] ?? 'kerf.html';
 const DIAMETERS = [0.8, 1.5875, 3.175, 6.35];
+
+/**
+ * The three things an open path can do, since it has no inside or outside.
+ *
+ * @param {Number} radius - the cutter radius, millimetres
+ * @returns {Array<Object>} `{ label, note, options }` per mode
+ */
+const modes = (radius) => [
+	{
+		label: 'Centre',
+		note: 'tool centre on the line — follows the drawing verbatim, cut straddles it',
+		options: { mode: OpenMode.CENTER },
+	},
+	{
+		label: 'Normal offset, side A',
+		note: 'tool centre one radius off along the local normal — the line is one EDGE of the cut',
+		options: { mode: OpenMode.NORMAL, distance: radius, side: Side.LEFT },
+	},
+	{
+		label: 'Normal offset, side B',
+		note: 'the same, the other side',
+		options: { mode: OpenMode.NORMAL, distance: radius, side: Side.RIGHT },
+	},
+	{
+		label: 'Heading offset',
+		note: `whole path moved ${(radius * 4).toFixed(2)} mm at 90° — rigid, shape preserved exactly`,
+		options: { mode: OpenMode.HEADING, distance: radius * 4, angleRadians: Math.PI / 2 },
+	},
+];
 
 if (input === undefined) {
 	console.error('usage: node lab/kerf.mjs <in.svg> [out.html]');
@@ -87,26 +116,28 @@ for (const shape of shapes) {
 		for (const diameter of DIAMETERS) {
 
 			const radius = diameter / 2;
-			const { path: toolpath } = offsetAlongNormals(source, radius, { side: Side.LEFT });
 
-			if (toolpath.length < 2)
-				continue;
+			for (const { label, note, options } of modes(radius)) {
 
-			// the cutter sweeps a full radius either side of the path it follows
-			const kerf = offsetOpen([toolpath], radius, {
-				end: OpenEnd.ROUND,
-				toleranceMm: 0.01,
-			});
+				const { path: toolpath } = openToolpath(source, options);
 
-			const all = [...source, ...kerf.flat()];
-			const box = {
-				minX: Math.min(...all.map((p) => p[0])), maxX: Math.max(...all.map((p) => p[0])),
-				minY: Math.min(...all.map((p) => p[1])), maxY: Math.max(...all.map((p) => p[1])),
-			};
+				if (toolpath.length < 2)
+					continue;
 
-			panels.push(panel(`${diameter} mm bit`,
-				`${(diameter / 25.4).toFixed(4)}″ — the cut is ${diameter} mm wide`,
-				kerf, source, box));
+				// the cutter sweeps a full radius either side of the path it follows
+				const kerf = offsetOpen([toolpath], radius, {
+					end: OpenEnd.ROUND,
+					toleranceMm: 0.01,
+				});
+
+				const all = [...source, ...kerf.flat()];
+				const box = {
+					minX: Math.min(...all.map((p) => p[0])), maxX: Math.max(...all.map((p) => p[0])),
+					minY: Math.min(...all.map((p) => p[1])), maxY: Math.max(...all.map((p) => p[1])),
+				};
+
+				panels.push(panel(`${diameter} mm bit — ${label}`, note, kerf, source, box));
+			}
 		}
 
 		if (panels.length > 0)
@@ -128,10 +159,12 @@ fs.writeFileSync(output, `<!DOCTYPE html><html><head><meta charset="utf-8">
  svg{width:100%;height:auto;display:block;border-radius:3px}
 </style></head><body>
 <h1>What the cut looks like — ${path.basename(input)}</h1>
-<p class="lead">Not toolpaths — the material actually removed, at four bit sizes. Yellow is
-stock, dark is cut away, and the thin blue line is the drawing. The bit follows one side of
-that line, so the line is one edge of the cut and the other edge is a bit diameter away.
-Where the drawing is finer than the bit, the cut swallows it. Document
+<p class="lead">Not toolpaths — the material actually removed. Yellow is stock, dark is cut
+away, the thin blue line is the drawing. An open path has no inside or outside, so it gets
+three operations instead: <b>centre</b> puts the tool on the line and the cut straddles it;
+a <b>normal offset</b> puts the line on one EDGE of the cut and follows the shape;
+a <b>heading offset</b> shifts the whole path rigidly. Each shown at four bit sizes, which
+is what decides how much of the drawing survives. Document
 ${viewport.physical.width.toFixed(1)} × ${viewport.physical.height.toFixed(1)} mm.</p>
 ${sections.join('')}
 </body></html>`);

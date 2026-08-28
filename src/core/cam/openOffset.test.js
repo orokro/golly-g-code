@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { offsetByHeading, offsetAlongNormals, resample, Side } from './openOffset.js';
+import { offsetByHeading, offsetAlongNormals, openToolpath, resample, OpenMode, Side } from './openOffset.js';
 
 /** Shortest distance from a point to a polyline. */
 const distanceToPath = (point, path) => {
@@ -289,5 +289,62 @@ describe('resample', () => {
 
 	it('passes through a path too short to resample', () => {
 		expect(resample([[1, 1]], 2)).toEqual([[1, 1]]);
+	});
+});
+
+
+describe('the three things an open path can do', () => {
+
+	const TOLERANCE = 0.005;
+	const line = [[0, 0], [100, 0], [100, 50]];
+
+	it('centre follows the drawing verbatim', () => {
+		const { path } = openToolpath(line, { mode: OpenMode.CENTER });
+		expect(path).toEqual(line);
+	});
+
+	it('centre ignores a distance rather than quietly offsetting', () => {
+		expect(openToolpath(line, { mode: OpenMode.CENTER, distance: 5 }).path).toEqual(line);
+	});
+
+	it('heading moves the whole path rigidly', () => {
+		const { path } = openToolpath(line, {
+			mode: OpenMode.HEADING, distance: 4, angleRadians: Math.PI / 2,
+		});
+		// cos(pi/2) is 6.1e-17, not 0 (CONVENTIONS 6)
+		expect(path).toHaveLength(3);
+		path.forEach(([x, y], i) => {
+			expect(x).toBeCloseTo(line[i][0], 9);
+			expect(y).toBeCloseTo(line[i][1] + 4, 9);
+		});
+	});
+
+	it('normal follows the shape, and puts the line on an EDGE of the cut', () => {
+		// the distinction that matters: the tool centre sits one radius off, so
+		// the drawn line is the boundary of the cut rather than its middle
+		const radius = 1.5875;
+		const { path } = openToolpath(line, {
+			mode: OpenMode.NORMAL, distance: radius, side: Side.LEFT, tolerance: TOLERANCE,
+		});
+		expect(closestApproachOne(path, line)).toBeGreaterThanOrEqual(radius - TOLERANCE - 0.001);
+	});
+
+	it('centre keeps the tool centre ON the line, unlike either offset', () => {
+		const radius = 1.5875;
+		const centre = openToolpath(line, { mode: OpenMode.CENTER }).path;
+		const normal = openToolpath(line, {
+			mode: OpenMode.NORMAL, distance: radius, tolerance: TOLERANCE,
+		}).path;
+
+		expect(closestApproachOne(centre, line)).toBeCloseTo(0, 9);
+		expect(closestApproachOne(normal, line)).toBeGreaterThan(radius / 2);
+	});
+
+	it('rejects an unknown mode rather than defaulting to one', () => {
+		expect(() => openToolpath(line, { mode: 'sideways' })).toThrow(RangeError);
+	});
+
+	it('rejects a negative heading distance', () => {
+		expect(() => openToolpath(line, { mode: OpenMode.HEADING, distance: -1 })).toThrow(RangeError);
 	});
 });

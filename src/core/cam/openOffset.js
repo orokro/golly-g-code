@@ -3,15 +3,21 @@
  * @description Offsetting for OPEN paths — the operations a line has instead of
  * "inside" and "outside".
  *
- * An open path has no interior, so the closed-path operations are meaningless
- * for it. jscut's answer is to force it closed, which turns "follow this line"
- * into "cut out this zero-area sliver". Two operations replace them:
+ * An open path has no interior, so "inside", "outside" and "centre" — which are
+ * defined relative to an enclosed area — are meaningless for it. jscut's answer
+ * is to force the path closed, which turns "follow this line" into "cut out this
+ * zero-area sliver". Three operations replace them, and `openToolpath` is the
+ * one entry point that gives you any of them:
+ *
+ * **Centre** puts the tool centre on the line. The cut straddles it, half a
+ * diameter each side. The only mode that follows the drawing verbatim.
  *
  * **Heading offset** displaces the whole path a fixed distance along a fixed
  * angle. Rigid, shape-preserving, and incapable of folding.
  *
  * **Normal offset** displaces the path along its local normal, so the result
- * follows the shape. One continuous cut, start to finish.
+ * follows the shape. One continuous cut, start to finish. The drawn line becomes
+ * one EDGE of the cut rather than its middle.
  *
  * ## Why the offset goes through Clipper
  *
@@ -84,6 +90,20 @@ export const DEFAULT_TOLERANCE = 0.005;
 
 /** Which side of the path to offset towards. */
 export const Side = Object.freeze({ LEFT: 'left', RIGHT: 'right' });
+
+/**
+ * What an open path can do instead of inside / outside / centre.
+ *
+ * `CENTER` is named to match the closed-path operation it stands in for, and it
+ * is the only one that follows the drawing exactly: the tool centre is on the
+ * line, so the cut is symmetric about it. The other two put the line on an edge
+ * of the cut.
+ */
+export const OpenMode = Object.freeze({
+	CENTER: 'center',
+	NORMAL: 'normal',
+	HEADING: 'heading',
+});
 
 /** Handedness multiplier for each side, applied to the left normal. */
 const HAND = Object.freeze({ [Side.LEFT]: 1, [Side.RIGHT]: -1 });
@@ -365,4 +385,55 @@ export function resample(points, spacing) {
 	out.push(points[points.length - 1]);
 
 	return out;
+}
+
+
+/**
+ * The toolpath for an open path, in any of the three modes.
+ *
+ * One entry point, because choosing between these is the thing a person does
+ * while dialling a job in — try centre, try a normal offset one side, try the
+ * other side, change the bit — and every one of them should be reachable by
+ * changing one field rather than calling a different function.
+ *
+ * @param {Array<Number[]>} points - the source path, in millimetres
+ * @param {Object} [options] - options
+ * @param {String} [options.mode=OpenMode.CENTER] - which of the three
+ * @param {Number} [options.distance=0] - offset distance for NORMAL and
+ *   HEADING, millimetres; ignored by CENTER. For a cut whose edge lands on the
+ *   drawn line this is the tool RADIUS, not its diameter
+ * @param {String} [options.side=Side.LEFT] - which side, for NORMAL
+ * @param {Number} [options.angleRadians=0] - heading, for HEADING
+ * @param {Number} [options.tolerance=DEFAULT_TOLERANCE] - arc tolerance, for NORMAL
+ * @returns {Object} `{ path, outline, warnings }`. `outline` is the tool's swept
+ *   area and is only produced by NORMAL, where it falls out of the offset; for
+ *   the other two it is empty rather than computed, since nothing needs it
+ * @throws {RangeError} for an unknown mode, or a distance the mode cannot use
+ */
+export function openToolpath(points, options = {}) {
+
+	const {
+		mode = OpenMode.CENTER,
+		distance = 0,
+		side = Side.LEFT,
+		angleRadians = 0,
+	} = options;
+
+	const source = dedupe(points);
+
+	if (mode === OpenMode.CENTER)
+		return { path: source, outline: [], warnings: [] };
+
+	if (mode === OpenMode.HEADING) {
+
+		if (!(distance >= 0))
+			throw new RangeError(`heading offset needs a distance of zero or more, got ${distance}`);
+
+		return { path: offsetByHeading(source, distance, angleRadians), outline: [], warnings: [] };
+	}
+
+	if (mode === OpenMode.NORMAL)
+		return offsetAlongNormals(points, distance, { side, tolerance: options.tolerance });
+
+	throw new RangeError(`unknown open-path mode '${mode}'`);
 }
