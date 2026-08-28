@@ -24,6 +24,7 @@
  */
 
 import { grbl } from './grbl.js';
+import { fitArcs } from '../path/fit.js';
 
 /** Where the tool is assumed to be before the program starts: nowhere known. */
 const UNKNOWN = Object.freeze({ x: NaN, y: NaN, z: NaN });
@@ -41,12 +42,14 @@ const UNKNOWN = Object.freeze({ x: NaN, y: NaN, z: NaN });
  * @param {Object} [options] - options
  * @param {Object} [options.dialect] - the dialect; a default GRBL post if absent
  * @param {Number} [options.spindleDwell=2] - seconds to let the spindle spin up
+ * @param {Number} [options.arcTolerance] - refit runs as arcs within this
+ *   deviation, in millimetres, and emit G2/G3. Omit to emit straight moves only
  * @returns {Object} `{ lines, warnings, stats }`
  * @throws {RangeError} when the plan is unusable
  */
 export function emitProgram(plan, options = {}) {
 
-	const { dialect = grbl(), spindleDwell = 2 } = options;
+	const { dialect = grbl(), spindleDwell = 2, arcTolerance } = options;
 	const { safeZ, jobs = [] } = plan;
 
 	if (!Number.isFinite(safeZ))
@@ -64,7 +67,7 @@ export function emitProgram(plan, options = {}) {
 
 	const lines = [];
 	const warnings = [];
-	const stats = { rapids: 0, cuts: 0, plunges: 0, toolChanges: 0 };
+	const stats = { rapids: 0, cuts: 0, arcs: 0, plunges: 0, toolChanges: 0 };
 
 	let at = { ...UNKNOWN };
 	let feedRate = null;
@@ -97,6 +100,24 @@ export function emitProgram(plan, options = {}) {
 		if (line !== null) {
 			lines.push(line);
 			stats.rapids++;
+		}
+		at = { ...at, ...to };
+	};
+
+	/**
+	 * Cuts round an arc at a feed, tracking position and modal feed.
+	 *
+	 * @param {Object} segment - the fitted arc
+	 * @param {Number} rate - feed in mm/min
+	 */
+	const arcTo = (segment, rate) => {
+		const to = { x: segment.to[0], y: segment.to[1] };
+		const line = dialect.arc(to, at, segment.centre, segment.clockwise,
+			rate === feedRate ? null : rate);
+		if (line !== null) {
+			lines.push(line);
+			stats.arcs++;
+			feedRate = rate;
 		}
 		at = { ...at, ...to };
 	};
@@ -167,8 +188,18 @@ export function emitProgram(plan, options = {}) {
 				feedTo({ z: pass.z }, plunge);
 				stats.plunges++;
 
-				for (const [x, y] of points.slice(1))
-					feedTo({ x, y }, cut);
+				if (arcTolerance === undefined) {
+					for (const [x, y] of points.slice(1))
+						feedTo({ x, y }, cut);
+					continue;
+				}
+
+				for (const segment of fitArcs(points, { tolerance: arcTolerance })) {
+					if (segment.type === 'arc')
+						arcTo(segment, cut);
+					else
+						feedTo({ x: segment.to[0], y: segment.to[1] }, cut);
+				}
 			}
 		}
 

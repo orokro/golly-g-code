@@ -350,3 +350,162 @@ describe('refusing to emit nonsense', () => {
 		expect(stats.plunges).toBe(1);
 	});
 });
+
+
+/**
+ * Traces the physical path an emitted program describes, arcs included.
+ *
+ * A second reader, again sharing nothing with the emitter. It interpolates G2
+ * and G3 the way a controller does — centre from incremental I and J, sweep the
+ * short way in the commanded direction — so the result is the shape the machine
+ * would actually move through, not the shape we hoped we asked for.
+ */
+const trace = (text, perArc = 64) => {
+	const path = [];
+	let at = { x: NaN, y: NaN, z: NaN };
+	let mode = null;
+
+	for (const raw of text.split('\n')) {
+		const line = raw.trim();
+		if (line === '' || line.startsWith(';'))
+			continue;
+
+		const words = line.match(/[A-Z]-?[0-9.]*/g) ?? [];
+		const word = (letter) => {
+			const found = words.find((w) => w[0] === letter);
+			return found === undefined ? undefined : Number(found.slice(1));
+		};
+
+		for (const w of words)
+			if (['G0', 'G1', 'G2', 'G3'].includes(w))
+				mode = w;
+
+		const to = {
+			x: word('X') ?? at.x,
+			y: word('Y') ?? at.y,
+			z: word('Z') ?? at.z,
+		};
+
+		if ((mode === 'G2' || mode === 'G3') && Number.isFinite(at.x)) {
+
+			const cx = at.x + (word('I') ?? 0);
+			const cy = at.y + (word('J') ?? 0);
+			const radius = Math.hypot(at.x - cx, at.y - cy);
+			const from = Math.atan2(at.y - cy, at.x - cx);
+			const until = Math.atan2(to.y - cy, to.x - cx);
+
+			let sweep = until - from;
+			if (mode === 'G2') {
+				while (sweep > 0) sweep -= 2 * Math.PI;
+				while (sweep < -2 * Math.PI) sweep += 2 * Math.PI;
+			} else {
+				while (sweep < 0) sweep += 2 * Math.PI;
+				while (sweep > 2 * Math.PI) sweep -= 2 * Math.PI;
+			}
+
+			for (let k = 1; k <= perArc; k++) {
+				const a = from + (sweep * (k / perArc));
+				path.push([cx + (radius * Math.cos(a)), cy + (radius * Math.sin(a))]);
+			}
+
+		} else if (mode === 'G1' && Number.isFinite(at.x)
+			&& (to.x !== at.x || to.y !== at.y)) {
+			path.push([to.x, to.y]);
+		}
+
+		at = to;
+	}
+
+	return path;
+};
+
+/** Furthest any point of one path strays from the other. */
+const strayFrom = (path, reference) => {
+	let worst = 0;
+	for (const [px, py] of path) {
+		let near = Infinity;
+		for (let i = 0; i + 1 < reference.length; i++) {
+			const [ax, ay] = reference[i];
+			const [bx, by] = reference[i + 1];
+			const vx = bx - ax, vy = by - ay;
+			const lengthSquared = (vx * vx) + (vy * vy);
+			let t = lengthSquared === 0 ? 0 : (((px - ax) * vx) + ((py - ay) * vy)) / lengthSquared;
+			t = Math.max(0, Math.min(1, t));
+			near = Math.min(near, Math.hypot(px - (ax + (t * vx)), py - (ay + (t * vy))));
+		}
+		worst = Math.max(worst, near);
+	}
+	return worst;
+};
+
+
+describe('arcs', () => {
+
+	/** A quarter circle sampled the way an offset leaves one. */
+	const quarter = (radius = 30, steps = 300) => {
+		const pts = [];
+		for (let i = 0; i <= steps; i++) {
+			const a = (Math.PI / 2) * (i / steps);
+			pts.push([radius * Math.cos(a), radius * Math.sin(a)]);
+		}
+		return pts;
+	};
+
+	const planFor = (runs) => ({
+		safeZ: 5,
+		jobs: [{
+			name: 'Arcs', tool: { number: 1, rpm: 12000 },
+			feeds: { cut: 900, plunge: 300 }, passes: [{ z: -2, runs }],
+		}],
+	});
+
+	it('emits straight moves only when no arc tolerance is given', () => {
+		const { text } = emitText(planFor([quarter()]));
+		expect(text).not.toMatch(/^G[23] /m);
+	});
+
+	it('emits G2 or G3 with incremental I and J once it is', () => {
+		const { text, stats } = emitText(planFor([quarter()]), { arcTolerance: 0.01 });
+		expect(stats.arcs).toBeGreaterThan(0);
+		expect(text).toMatch(/^G[23] X[-0-9.]+ Y[-0-9.]+ I[-0-9.]+ J[-0-9.]+/m);
+	});
+
+	it('MOVES WHERE IT SHOULD — the path a controller would trace matches', () => {
+		// The check the fitting cannot do for itself. Read the emitted arcs back
+		// the way a controller would, sweep them, and compare the resulting
+		// motion against the toolpath that was asked for.
+		const source = quarter();
+		const { text } = emitText(planFor([source]), { arcTolerance: 0.01 });
+
+		expect(strayFrom(trace(text), source)).toBeLessThanOrEqual(0.01 + 1e-6);
+	});
+
+	it('holds that on a wave, both directions of curvature', () => {
+		const source = [];
+		for (let x = 0; x <= 200; x += 0.2)
+			source.push([x, 9 * Math.sin((2 * Math.PI * x) / 40)]);
+
+		const { text, stats } = emitText(planFor([source]), { arcTolerance: 0.02 });
+
+		expect(stats.arcs).toBeGreaterThan(4);
+		expect(strayFrom(trace(text), source)).toBeLessThanOrEqual(0.02 + 1e-6);
+	});
+
+	it('cuts the block count by an order of magnitude', () => {
+		const source = quarter(30, 2000);
+		const straight = emitText(planFor([source])).stats;
+		const fitted = emitText(planFor([source]), { arcTolerance: 0.01 }).stats;
+
+		expect(straight.cuts).toBeGreaterThan(1900);
+		expect(fitted.cuts + fitted.arcs).toBeLessThan(straight.cuts / 100);
+	});
+
+	it('tightening the tolerance keeps the promise', () => {
+		const source = quarter();
+		for (const tolerance of [0.002, 0.01, 0.05]) {
+			const { text } = emitText(planFor([source]), { arcTolerance: tolerance });
+			expect(strayFrom(trace(text), source), `${tolerance}`)
+				.toBeLessThanOrEqual(tolerance + 1e-6);
+		}
+	});
+});

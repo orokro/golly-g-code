@@ -402,12 +402,54 @@ three run straight through it as if it were not there. A tab at 0 is never cut.
 - [ ] **Ramp plunge** — port jscut's time-budget ramp: walk forward along the path until round-trip distance exceeds `cutFeed × (Δz / plungeFeed)`, interpolate Z over the there-and-back
 
 ### 1.9 Arc fitting → G2/G3 **[the biggest cut-quality win over jscut]**
-jscut never emits an arc. Everything is flattened polylines, which makes GRBL's
-look-ahead planner decelerate through curves.
-- [ ] Fit circular arcs to flattened runs within tolerance (biarc or least-squares + validation)
-- [ ] Emit `G2`/`G3` with `I`/`J`, correct for the active plane
-- [ ] Tolerance is a project setting; must be able to disable entirely
-- [ ] Tests: fitted arc deviation asserted ≤ tolerance; file-size reduction measured
+`src/core/path/fit.js` refits a polyline as lines and arcs; the post-processor
+emits G2/G3 with incremental I/J when given an `arcTolerance`.
+
+By the time a toolpath reaches the post-processor it is a polyline, because
+Clipper offsets polygons and knows nothing about curves — so every curve is a few
+thousand chords, each an individual `G1`. That is bad in three ways and only one
+is file size: the planner looks ahead a fixed number of blocks and cannot keep
+the feed up through thousands of 0.05mm moves; GRBL's small serial buffer
+starves; and the file is huge. An arc is one block the controller interpolates
+itself, at full feed.
+
+- [x] Greedy longest-first fit, doubling then bisecting, so a smooth curve costs
+  log(n) probes rather than a quadratic scan
+- [x] **Checked against the SEGMENTS, not just the vertices.** Any three points
+  lie on a circle, so a fit through three points has verified nothing — and a
+  right-angled corner IS three points. On Greg's skyline that turned a corner
+  into a semicircle bulging **5.15mm** off the path with every vertex exactly on
+  it. Each chord's sagitta is now checked. Third time this session that
+  points-versus-segments has been the bug.
+- [x] **The tolerance is a budget split in half.** Vertex-off-circle and
+  chord-sagitta are separate contributions and they ADD; checking each against
+  the full tolerance let the total reach twice it (0.0134mm measured on a 0.01mm
+  tolerance, unmoved by any amount of output precision, which is how it was
+  identified rather than guessed at).
+- [x] Monotonic sweep, so a path that doubles back cannot masquerade as an arc
+- [x] **Sweep stops short of half a turn.** At exactly pi the endpoints are
+  diametrically opposite and `atan2` cannot tell +pi from -pi, so the direction
+  becomes a coin flip.
+- [x] Very flat arcs rejected: a huge radius is a straight line with a
+  numerically delicate centre far off the work
+- [x] IJK form, not R: `R` cannot express more than half a turn without a sign
+  convention controllers disagree about, and loses precision badly on a shallow
+  arc
+- [x] **Verified by tracing the emitted G-code**, arcs interpolated the way a
+  controller would, against the toolpath that was planned. That check found the
+  semicircle bug; nothing else could have.
+
+Measured on painted_ladies_v001.svg (3687 straight cuts, 71.3 KiB unfitted):
+
+| tolerance | size | worst measured deviation |
+|---|---|---|
+| 0.005mm | 86% | 0.0034mm |
+| 0.01mm | 61% | 0.0072mm |
+| 0.03mm | 30% | 0.0200mm |
+
+The skyline is mostly straight lines, so it is the least favourable case. On the
+serpentine chirp at 0.01mm: 8466 cuts and 160.4 KiB become **17%**, deviation
+0.0079mm.
 
 ### 1.10 Post-processor
 `src/core/post/grbl.js` is the dialect (how a move becomes text);

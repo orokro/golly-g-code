@@ -146,6 +146,31 @@ export function grbl(options = {}) {
 		},
 
 		/**
+		 * Circular interpolation: G2 clockwise, G3 counter-clockwise.
+		 *
+		 * The centre goes out as I and J, which are INCREMENTAL from the start
+		 * point. The other way of writing an arc, `R`, cannot express a sweep of
+		 * more than half a turn without a sign convention that controllers
+		 * disagree about, and loses precision badly on a shallow arc where a tiny
+		 * change in R moves the centre a long way. IJK has neither problem.
+		 *
+		 * @param {Object} to - end point `{ x, y }` in millimetres
+		 * @param {Object} from - current position
+		 * @param {Number[]} centre - arc centre, absolute millimetres
+		 * @param {Boolean} clockwise - which way round
+		 * @param {Number|null} feedRate - feed in mm/min, or null if unchanged
+		 * @returns {String|null} the line, or null when nothing would move
+		 */
+		arc: (to, from, centre, clockwise, feedRate) => {
+			const words = axes({ x: to.x, y: to.y }, from);
+			if (words === '')
+				return null;
+			return `${clockwise ? 'G2' : 'G3'} ${words}`
+				+ ` I${n(centre[0] - from.x)} J${n(centre[1] - from.y)}`
+				+ `${feedRate === null ? '' : ` F${n(feedRate)}`}`;
+		},
+
+		/**
 		 * @param {Number} rpm - spindle speed
 		 * @returns {String} the spindle-on line
 		 */
