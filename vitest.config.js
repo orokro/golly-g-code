@@ -7,6 +7,11 @@
  * eslint.config.js), not just by convention. Tests that DO need a DOM opt in per
  * file with an `@vitest-environment jsdom` docblock.
  *
+ * `include` covers ALL of `src`, not only `src/core`. It used to stop at core,
+ * and the first test written outside it did not run at all — it lint-passed, it
+ * sat in the tree, and it asserted nothing. A test file that silently never runs
+ * is worse than an absent one, because it reads as coverage.
+ *
  * ---------------------------------------------------------------------------
  * The `resolve.dedupe` entry below is load-bearing, and its absence produces a
  * spectacularly unhelpful failure. `vue-win-mgr` is consumed as a `file:`
@@ -46,10 +51,10 @@ export default defineConfig({
 
 	test: {
 		environment: 'node',
-		include: ['src/core/**/*.test.js', 'tests/**/*.test.js'],
+		include: ['src/**/*.test.js', 'tests/**/*.test.js'],
 		coverage: {
-			include: ['src/core/**/*.js'],
-			exclude: ['src/core/**/*.test.js'],
+			include: ['src/core/**/*.js', 'src/renderer/**/*.js'],
+			exclude: ['**/*.test.js'],
 		},
 	},
 });
