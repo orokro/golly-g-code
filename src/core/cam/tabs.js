@@ -181,6 +181,10 @@ export function projectOnto(path, point, lengths = arcLengths(path)) {
  * @param {Number} [options.defaultLength=6] - length for tabs that do not set one
  * @param {Number} [options.defaultDepth=0] - depth for tabs that do not set one;
  *   zero means the tab is never cut into at all
+ * @param {Boolean} [options.congruent=false] - true when the toolpath is the
+ *   source moved rigidly (centre or heading mode), from `openToolpath`. Then a
+ *   position maps arc length for arc length; otherwise it maps by nearest-point
+ *   projection. See below for why it cannot be one rule for both
  * @param {Number} [options.toolRadius] - cutter radius; supplied only so a tab
  *   too narrow to leave a bridge can be reported. It does not move anything
  * @returns {Object} `{ spans, warnings }` — spans are `{ start, end, depth }`,
@@ -189,7 +193,7 @@ export function projectOnto(path, point, lengths = arcLengths(path)) {
  */
 export function placeTabs(source, toolpath, tabs, options = {}) {
 
-	const { toolRadius, defaultLength = 6, defaultDepth = 0 } = options;
+	const { toolRadius, defaultLength = 6, defaultDepth = 0, congruent = false } = options;
 
 	const warnings = [];
 
@@ -230,17 +234,22 @@ export function placeTabs(source, toolpath, tabs, options = {}) {
 
 		// both ends measured on the source, so the bridge is the width asked for
 		const middle = position * sourceTotal;
-		const from = pointAt(source, middle - (length / 2), sourceLengths);
-		const to = pointAt(source, middle + (length / 2), sourceLengths);
 
-		const a = projectOnto(toolpath, from, toolLengths);
-		const b = projectOnto(toolpath, to, toolLengths);
+		// A congruent toolpath is the source moved rigidly, so the corresponding
+		// point is the one at the same fraction of the way along. Projection
+		// would find the nearest point instead, which at a corner is around it
+		// rather than straight across: a 6mm heading offset put a tab 6mm along
+		// from where it had been placed.
+		const along = (distanceAlongSource) =>
+			(congruent
+				? (distanceAlongSource / sourceTotal) * toolTotal
+				: projectOnto(toolpath, pointAt(source, distanceAlongSource, sourceLengths),
+					toolLengths).distance);
 
-		raw.push({
-			start: Math.min(a.distance, b.distance),
-			end: Math.max(a.distance, b.distance),
-			depth,
-		});
+		const a = along(middle - (length / 2));
+		const b = along(middle + (length / 2));
+
+		raw.push({ start: Math.min(a, b), end: Math.max(a, b), depth });
 	}
 
 	// merge overlaps: two tabs sharing material are one bridge

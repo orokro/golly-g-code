@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { arcLengths, pointAt, projectOnto, placeTabs, planPass, tabBreaks, measureBridges } from './tabs.js';
-import { offsetAlongNormals, Side } from './openOffset.js';
+import { offsetAlongNormals, openToolpath, OpenMode, Side } from './openOffset.js';
 import { computeDepthPasses } from './depth.js';
 
 /** A gentle arc, so inside and outside toolpaths have genuinely different lengths. */
@@ -323,5 +323,93 @@ describe('measuring what is actually left holding the part', () => {
 
 	it('rejects a non-positive tool radius', () => {
 		expect(() => measureBridges([[0, 0], [1, 0]], [], 0)).toThrow(RangeError);
+	});
+});
+
+
+describe('a hand-placed tab survives changing the job around it', () => {
+
+	// Greg places tabs by hand on the Job and expects them to "just work". The
+	// two things that move underneath them are the cutter and the offset MODE,
+	// and changing the mode replaces the toolpath entirely rather than nudging
+	// it. Anchoring to the source is supposed to make both harmless; that is
+	// worth checking rather than believing.
+
+	const TOLERANCE = 0.005;
+	const source = [[0, 0], [60, 0], [60, 40], [120, 40], [120, 0], [180, 0]];
+	const hand = [{ position: 0.2, length: 8, depth: 3 }, { position: 0.7, length: 8, depth: 3 }];
+
+	/**
+	 * How far the middle of a toolpath span is from where the tab was placed.
+	 *
+	 * No inverse mapping, deliberately. Nearest-point projection has now failed
+	 * as an inverse three separate times in this file — around a corner, and
+	 * again where a heading offset lays the shifted path directly on top of the
+	 * original. What is true in every mode without needing an inverse is that
+	 * the tab's middle should sit exactly the offset distance from the point on
+	 * the drawing where it was placed. A tab that slid along the path fails
+	 * that: it would be nearer, or further, than the offset.
+	 */
+	const missBy = (toolpath, span, position) => {
+		const sourceLengths = arcLengths(source);
+		const placed = pointAt(source, position * sourceLengths[source.length - 1], sourceLengths);
+		const toolLengths = arcLengths(toolpath);
+		const middle = pointAt(toolpath, (span.start + span.end) / 2, toolLengths);
+		return Math.hypot(middle[0] - placed[0], middle[1] - placed[1]);
+	};
+
+	it('stays put when the offset mode changes, not just the cutter', () => {
+		const radius = 1.5875;
+		const variants = [
+			['centre', 0, { mode: OpenMode.CENTER }],
+			['normal A', radius,
+				{ mode: OpenMode.NORMAL, distance: radius, side: Side.LEFT, tolerance: TOLERANCE }],
+			['normal B', radius,
+				{ mode: OpenMode.NORMAL, distance: radius, side: Side.RIGHT, tolerance: TOLERANCE }],
+			['heading', 6, { mode: OpenMode.HEADING, distance: 6, angleRadians: Math.PI / 2 }],
+		];
+
+		for (const [label, offset, options] of variants) {
+
+			const { path, congruent } = openToolpath(source, options);
+			const { spans } = placeTabs(source, path, hand, { toolRadius: radius, congruent });
+
+			expect(spans, label).toHaveLength(2);
+
+			spans.forEach((span, i) => {
+				// exactly the offset away from where it was placed, and no
+				// further along the path than that
+				expect(missBy(path, span, hand[i].position), `${label} tab ${i}`)
+					.toBeCloseTo(offset, 1);
+				expect(span.end - span.start, `${label} tab ${i} width`).toBeCloseTo(8, 1);
+			});
+		}
+	});
+
+	it('maps a heading offset straight across, not around the nearest corner', () => {
+		// The bug this file found. A 6mm heading offset moves the whole path
+		// rigidly, so a tab at source 178..186 belongs at toolpath 178..186.
+		// Nearest-point projection put it at 184..192, because the nearest bit of
+		// the shifted path to the tab was around a corner.
+		const { path, congruent } = openToolpath(source,
+			{ mode: OpenMode.HEADING, distance: 6, angleRadians: Math.PI / 2 });
+		const { spans } = placeTabs(source, path, [{ position: 0.7, length: 8, depth: 3 }],
+			{ congruent });
+
+		expect(spans[0].start).toBeCloseTo(178, 6);
+		expect(spans[0].end).toBeCloseTo(186, 6);
+	});
+
+	it('breaks the same passes whatever the mode, since depth is the source of that', () => {
+		const radius = 1.5875;
+		for (const options of [
+			{ mode: OpenMode.CENTER },
+			{ mode: OpenMode.NORMAL, distance: radius, tolerance: TOLERANCE },
+		]) {
+			const { path, congruent } = openToolpath(source, options);
+			const { spans } = placeTabs(source, path, hand, { toolRadius: radius, congruent });
+			expect(planPass(path, spans, -2)).toHaveLength(1);
+			expect(planPass(path, spans, -4)).toHaveLength(3);
+		}
 	});
 });

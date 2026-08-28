@@ -405,9 +405,20 @@ export function resample(points, spacing) {
  * @param {String} [options.side=Side.LEFT] - which side, for NORMAL
  * @param {Number} [options.angleRadians=0] - heading, for HEADING
  * @param {Number} [options.tolerance=DEFAULT_TOLERANCE] - arc tolerance, for NORMAL
- * @returns {Object} `{ path, outline, warnings }`. `outline` is the tool's swept
- *   area and is only produced by NORMAL, where it falls out of the offset; for
- *   the other two it is empty rather than computed, since nothing needs it
+ * @returns {Object} `{ path, outline, warnings, congruent }`. `outline` is the
+ *   tool's swept area and is only produced by NORMAL, where it falls out of the
+ *   offset; for the other two it is empty rather than computed, since nothing
+ *   needs it.
+ *
+ *   `congruent` says whether the toolpath is the source moved rigidly — true for
+ *   CENTER and HEADING, false for NORMAL. Anything that has to map a position on
+ *   the SOURCE to the same position on the TOOLPATH needs it. On a congruent
+ *   path the mapping is arc length for arc length; on a normal offset the two
+ *   paths are different lengths and nearest-point projection is the only honest
+ *   correspondence. Using projection on a congruent path is wrong, and wrong in
+ *   a way that looks fine until the path has a corner: a heading offset of 6mm
+ *   put a tab 6mm along from where it was placed, because the nearest bit of
+ *   toolpath to the tab was around the corner rather than straight ahead.
  * @throws {RangeError} for an unknown mode, or a distance the mode cannot use
  */
 export function openToolpath(points, options = {}) {
@@ -422,18 +433,26 @@ export function openToolpath(points, options = {}) {
 	const source = dedupe(points);
 
 	if (mode === OpenMode.CENTER)
-		return { path: source, outline: [], warnings: [] };
+		return { path: source, outline: [], warnings: [], congruent: true };
 
 	if (mode === OpenMode.HEADING) {
 
 		if (!(distance >= 0))
 			throw new RangeError(`heading offset needs a distance of zero or more, got ${distance}`);
 
-		return { path: offsetByHeading(source, distance, angleRadians), outline: [], warnings: [] };
+		return {
+			path: offsetByHeading(source, distance, angleRadians),
+			outline: [],
+			warnings: [],
+			congruent: true,
+		};
 	}
 
 	if (mode === OpenMode.NORMAL)
-		return offsetAlongNormals(points, distance, { side, tolerance: options.tolerance });
+		return {
+			...offsetAlongNormals(points, distance, { side, tolerance: options.tolerance }),
+			congruent: false,
+		};
 
 	throw new RangeError(`unknown open-path mode '${mode}'`);
 }

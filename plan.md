@@ -347,10 +347,18 @@ A tab at 3mm leaves 1mm standing, and breaks only passes 4 and 5 — the first
 three run straight through it as if it were not there. A tab at 0 is never cut.
 
 - [x] Tab anchored as **normalized arc-length position on the source path**
-- [x] **Resolved onto the offset toolpath at generation time** by nearest-point
-  projection. Measured across cutters of 1, 3.175, 6 and 12mm diameter: the
-  bridge stays in the same place on the part and stays the same width. jscut
-  anchors to the toolpath, so changing the cutter moves and resizes every tab.
+- [x] **Resolved onto the toolpath at generation time**, and the mapping depends
+  on the MODE. `openToolpath` reports `congruent`: true for centre and heading,
+  where the toolpath is the drawing moved rigidly and a position maps arc length
+  for arc length; false for a normal offset, where the two paths are different
+  lengths and nearest-point projection is the only honest correspondence. Using
+  projection for both looks fine until the path has a corner — a 6mm heading
+  offset put a tab 6mm along from where it was placed, because the nearest piece
+  of shifted toolpath was around the corner rather than straight across.
+- [x] Verified across cutters of 1, 3.175, 6 and 12mm AND across all four
+  modes: the tab sits exactly its offset distance from the point on the drawing
+  where it was placed, and stays the width asked for. jscut anchors to the
+  toolpath, so changing the cutter moves and resizes every tab.
 - [x] **Per-tab length AND depth, each with a job default** — real units, not %
 - [x] `planPass(toolpath, spans, passZ)` returns the runs actually cut on one
   pass; the gaps between them are the retract-rapid-plunge. How to leave and
