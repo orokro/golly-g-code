@@ -1,137 +1,137 @@
 <!--
 	@file App.vue
-	@description Application root.
+	@description Application root: the window manager, themed and persistent.
 
-	PLACEHOLDER — Phase 0 only. This exists to prove the shell boots, the preload
-	bridge is reachable, and the CSP is not blocking anything. Phase 2 replaces it
-	entirely with the vue-win-mgr layout.
+	Phase 2. The windows themselves are stand-ins; what is real here is the
+	layout, the theme, saving and restoring where the user put things, and the
+	single render driver that every view will register with.
+
+	The render driver is provided rather than imported by the views, so there is
+	exactly one loop for the application and a test can substitute a fake clock
+	for it. See composables/renderDriver.js for why one loop and not one each.
 -->
+<template>
+	<main @contextmenu.prevent>
+
+		<WindowManager
+			ref="managerEl"
+			:availableWindows="availableWindows"
+			:defaultLayout="startingLayout"
+			:showTopBar="true"
+			:showStatusBar="true"
+			:splitMergeHandles="true"
+			:showMergeButtons="true"
+			:keepEmptyFrames="true"
+			:theme="managerTheme"
+			@layout-changed="onLayoutChanged"
+		>
+			<template #topBar>
+				<AppHeader :dark="palette.dark" @reset-layout="resetLayout" @toggle-theme="toggleTheme"/>
+			</template>
+
+			<template #statusBar>
+				<AppStatusBar :hint="hint" :state="codegenState"/>
+			</template>
+
+		</WindowManager>
+
+	</main>
+</template>
+
 <script setup>
 
-import { ref, onMounted } from 'vue';
+import { ref, shallowRef, computed, provide, onMounted, onBeforeUnmount, watchEffect } from 'vue';
+import { WindowManager } from 'vue-win-mgr';
 
-/** @type {import('vue').Ref<String>} Application version, read over IPC. */
-const version = ref('…');
+import AppHeader from './AppHeader.vue';
+import AppStatusBar from './AppStatusBar.vue';
 
-/** @type {import('vue').Ref<String>} Result of the Web Worker smoke test. */
-const workerStatus = ref('…');
+import { availableWindows, windowSlugs } from './windows/registry.js';
+import { defaultLayout } from './layout/defaultLayout.js';
+import { createLayoutStore } from './composables/layoutStore.js';
+import { createRenderDriver } from './composables/renderDriver.js';
+import { presets, windowManagerTheme, applyPalette } from './theme/palette.js';
 
-/** @type {import('vue').Ref<String>} Result of the WebGL capability probe. */
-const webglStatus = ref('…');
+/** @type {import('vue').Ref} The manager component, for imperative resets. */
+const managerEl = ref(null);
 
+/** The active palette. Shallow: a palette is replaced wholesale, never edited. */
+const palette = shallowRef(presets.dark);
 
-/**
- * Verifies a blob-URL Web Worker can actually be created.
- *
- * This is the single most valuable check in this placeholder: the upstream
- * template's CSP silently blocked blob workers, and that failure reproduces only
- * in the packaged build. If this ever reports "blocked", the CSP in main.cjs has
- * regressed.
- *
- * @returns {void}
- */
-function probeWorker() {
+/** What the status bar says on the left. */
+const hint = ref('');
 
-	try {
-		const source = 'self.onmessage = () => self.postMessage("pong");';
-		const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
-		const worker = new Worker(url);
+/** What codegen is doing. Wired to the real pipeline in Phase 3. */
+const codegenState = ref('idle');
 
-		worker.onmessage = (event) => {
-			workerStatus.value = `ok (${event.data})`;
-			worker.terminate();
-			URL.revokeObjectURL(url);
-		};
-
-		worker.onerror = () => {
-			workerStatus.value = 'BLOCKED — check the CSP in src/main/main.cjs';
-		};
-
-		worker.postMessage('ping');
-
-	} catch (error) {
-		workerStatus.value = `BLOCKED — ${error.message}`;
-	}
-}
-
+/** Remembers where the user put their windows. */
+const layoutStore = createLayoutStore({ knownSlugs: windowSlugs });
 
 /**
- * Reports which WebGL version this machine can actually provide.
+ * The one render loop for the whole app.
  *
- * three.js dropped its WebGL1 fallback at r163, so a WebGL2-capable context is a
- * hard requirement for the Preview3D window in Phase 8.
- *
- * @returns {void}
+ * Provided, not imported, so every view shares it and a test can swap it out.
  */
-function probeWebGL() {
+const renderDriver = createRenderDriver();
+provide('renderDriver', renderDriver);
 
-	const canvas = document.createElement('canvas');
-	const gl2 = canvas.getContext('webgl2');
+/** The saved layout if there is a usable one, otherwise the default. */
+const startingLayout = layoutStore.load() ?? defaultLayout();
 
-	if (gl2 !== null) {
-		const info = gl2.getExtension('WEBGL_debug_renderer_info');
-		const renderer = info ? gl2.getParameter(info.UNMASKED_RENDERER_WEBGL) : 'unknown';
-		webglStatus.value = `WebGL2 — ${renderer}`;
-		return;
-	}
+/** The window manager's theme prop, derived from the palette. */
+const managerTheme = computed(() => windowManagerTheme(palette.value));
 
-	webglStatus.value = canvas.getContext('webgl') !== null
-		? 'WebGL1 ONLY — three.js r163+ will not run here'
-		: 'no WebGL at all';
+// keep the CSS variables in step with the palette; the manager takes a prop,
+// everything else reads the variables
+watchEffect(() => applyPalette(palette.value));
+
+/**
+ * Records a layout change. Debounced inside the store, because dragging a
+ * splitter emits one of these per mouse move.
+ *
+ * @param {Object} layout - the manager's layout description
+ */
+function onLayoutChanged(layout) {
+	layoutStore.save(layout);
 }
 
+/** Forgets the saved layout and puts the default back. */
+function resetLayout() {
+	layoutStore.clear();
+	managerEl.value?.loadLayout?.(defaultLayout());
+}
 
-onMounted(async () => {
-	version.value = await window.gollyAPI.getVersion();
-	probeWorker();
-	probeWebGL();
+/** Switches presets. */
+function toggleTheme() {
+	palette.value = palette.value.dark ? presets.light : presets.dark;
+}
+
+onMounted(() => {
+
+	// A layout change still inside the debounce window when the app quits would
+	// otherwise be lost, which is exactly the change the user just made.
+	window.addEventListener('beforeunload', layoutStore.flush);
+});
+
+onBeforeUnmount(() => {
+	window.removeEventListener('beforeunload', layoutStore.flush);
+	layoutStore.flush();
+	renderDriver.stop();
 });
 
 </script>
 
-<template>
-	<div class="boot">
-		<h1>GollyGCode</h1>
-		<p class="sub">Phase 0 shell — replaced in Phase 2.</p>
-		<dl>
-			<dt>version</dt><dd>{{ version }}</dd>
-			<dt>blob worker</dt><dd>{{ workerStatus }}</dd>
-			<dt>webgl</dt><dd>{{ webglStatus }}</dd>
-		</dl>
-	</div>
-</template>
+<style>
 
-<style scoped>
+	html, body, #app {
+		height: 100%;
+		margin: 0;
+		background: var(--gg-background);
+		color: var(--gg-text);
+	}
 
-.boot {
-	padding: 32px;
-	font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
-}
-
-h1 {
-	margin: 0;
-	font-size: 22px;
-	font-weight: 600;
-}
-
-.sub {
-	margin: 4px 0 24px;
-	opacity: 0.5;
-}
-
-dl {
-	display: grid;
-	grid-template-columns: max-content 1fr;
-	gap: 6px 18px;
-	margin: 0;
-}
-
-dt {
-	opacity: 0.5;
-}
-
-dd {
-	margin: 0;
-}
+	main {
+		height: 100%;
+	}
 
 </style>

@@ -564,22 +564,42 @@ about a mistake.
 Goal: the window layout, themed, persistent, with a working visibility/render
 driver. Dummy window contents.
 
-- [ ] Mount `vue-win-mgr` with the default layout:
-  - Header bar (not a window): File menu, save/load, reset layout, project tabs later
-  - Left column ⅓: Outliner (top) / Inspector (bottom)
-  - Right column: tab group ~85% (Workspace · Preview3D · Preview2D · Code · Settings), Timeline below
-  - Status bar: tooltip text, sim time, **codegen status** (idle / queued / generating / stale) as a small progress strip, Blender-style
-- [ ] Register all window types with **explicit slugs** (auto-derived slugs come from build-time component names and break under minification)
-- [ ] Theme: one reactive palette driving both `vue-win-mgr`'s flat `--theme-*` and `vue-settings-panel`'s grouped `--lc-*`/`--mc-*`. Light + dark presets
-- [ ] Layout persistence to localStorage via the new `@layout-changed` event, debounced
-- [ ] "Reset layout" in the header bar
-- [ ] **Single app-level rAF driver.** Views register a render callback; the driver skips callbacks whose window `isVisible` is false, and stops requesting frames entirely when none are live. This is what keeps hidden tabs from burning CPU — the window manager does not throttle them, unlike a background browser tab
-- [ ] `useVisible()` composable wrapping `windowCtx.isVisible`, with an `IntersectionObserver` fallback if the patched build isn't present
-- [ ] `useResize()` composable — guard against 0×0 (hidden `display:none` elements report zero, and a naive `setSize()` produces a NaN projection matrix)
-- [ ] Settings window mounting `vue-settings-panel`: default units, theme, grid defaults, decimal places
-- [ ] `onSerialize` / `onLayoutLoad` rider state per window (zoom level, scroll position, camera pose)
+- [x] Mount `vue-win-mgr` with the default layout: Outliner over Inspector in a
+  left column, the main tab group (Workspace · Preview3D · Preview2D · Code ·
+  Settings) filling the rest, Timeline as a strip beneath it. Header bar and
+  status bar in the manager's slots, so neither can be closed or tabbed away —
+  which matters most for "reset layout", the escape hatch that has to survive
+  whatever the user did to need it.
+- [x] **Every window registered with an EXPLICIT slug.** An auto-derived slug
+  comes from the build-time component name; minification renames it, so a layout
+  saved before a release stops matching the windows in the release and the user
+  opens the app to a layout that silently drops half its panels. A slug may
+  never change once shipped — rename the title, which is what people read.
+- [x] Theme: one set of ROLES driving both `vue-win-mgr`'s flat theme prop and
+  `vue-settings-panel`'s grouped CSS variables. Left as two palettes they drift.
+  Light + dark, verified in a real browser: `--gg-surface` and `--mc-bg-color`
+  are the same colour, not two colours that resemble each other.
+- [x] Layout persistence to localStorage, debounced 400ms, **versioned** (a
+  layout from an older build can restore an app the user cannot repair from
+  inside the app) and **validated against this build's slugs**. A flush on
+  `beforeunload`, since the change still inside the debounce when the app quits
+  is exactly the one just made.
+- [x] "Reset layout" in the header bar
+- [x] **Single app-level rAF driver**, provided not imported. Skips callbacks
+  whose window is not visible and stops requesting frames entirely when none
+  are. The reason it exists: a hidden browser TAB is throttled to about 1fps, a
+  window hidden behind a tab INSIDE the manager is not, so a Three.js view in a
+  background tab keeps rendering at 60fps into a canvas nobody can see.
+  Deliberately framework-free so it can be tested against a fake clock.
+- [ ] `useVisible()` composable wrapping `windowCtx.isVisible`, with an
+  `IntersectionObserver` fallback if the patched build isn't present
+- [ ] `useResize()` composable — guard against 0×0 (hidden `display:none`
+  elements report zero, and a naive `setSize()` gives a NaN projection matrix)
+- [ ] Settings window mounting `vue-settings-panel`
+- [ ] `onSerialize` / `onLayoutLoad` rider state per window
 
----
+**Verified by building the renderer and rendering it in a real browser**, which
+is the only thing that catches the failure below.
 
 ## Phase 3 — Data model, undo, project I/O
 

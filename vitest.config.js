@@ -31,12 +31,17 @@
 
 import Path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vue from '@vitejs/plugin-vue';
 import { defineConfig } from 'vitest/config';
 
 /** Absolute path to the project root (this file's directory). */
 const rootDir = Path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+
+	// .vue files appear in the graph even for tests that never mount anything --
+	// the window registry imports its components to pair them with slugs.
+	plugins: [vue()],
 
 	resolve: {
 
