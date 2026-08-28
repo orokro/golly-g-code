@@ -40,7 +40,14 @@ const CUT_DEPTH = 5;
 const PASS_DEPTH = 1;
 const SAFE_Z = 5;
 const ARC_TOLERANCE = Number(process.env.ARCTOL ?? 0.01);
-const TABS = [0.15, 0.4, 0.62, 0.85].map((position) => ({ position, length: 8, depth: 3 }));
+// No tabs by default. Greg on the skyline: "In reality, for the skyline both
+// parts of the material (upper and lower) will be clamped down, and the pass
+// will go completely through with zero tabs." Tabs are hand-placed on the Job in
+// the UI, so a lab default that scatters them by fraction of arc length is not
+// how anybody would ever place them (D17). TABS=1 to see the broken case.
+const TABS = process.env.TABS
+	? [0.15, 0.4, 0.62, 0.85].map((position) => ({ position, length: 8, depth: 3 }))
+	: [];
 
 const { shapes, viewport } = importSvgDocument(fs.readFileSync(input, 'utf8'), {
 	pixelsPerInch: Number(process.env.DPI ?? 96),
