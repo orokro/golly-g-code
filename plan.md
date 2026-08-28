@@ -491,21 +491,42 @@ supported (D12).
 - [ ] Stub post for `ncviewer.com` dialect differences if any surface during verification
 
 ### 1.11 G-code parser (test oracle, not pipeline)
-- [ ] Port `parseGCode()` from NCviewer (`index.html` lines 617–786 — the one genuinely reusable, DOM-free piece in that repo)
-- [ ] Keep its clever bit: auto-detect IJK absolute-vs-incremental from the first arc's radius consistency
-- [ ] Fix its bugs: full circles are silently dropped; G18/G19 arc centres swap I/J/K; `R`-form ignores sign; any line with a G-word emits a degenerate zero-length move
-- [ ] Add what it lacks: **G20/G21 units** (absent entirely), G54–G59 work offsets, spindle/M-codes, tool changes
+`src/core/post/parse.js`. Nothing needs it to MAKE G-code; it exists so the
+output can be read back the way a controller would. That has already earned its
+keep — arc fitting passed every unit test on synthetic curves and then bulged
+5.15mm off a right-angled corner on real artwork, and tracing the emitted file
+is what found it. Deliberately shares no constants, formatting or geometry with
+the emitter: a parser built from the emitter's own parts would agree with it
+about a mistake.
+- [x] Structure taken from NCviewer's `parseGCode()` — its modal state machine is
+  the right shape
+- [x] Fixed: **full circles silently dropped** (coincident endpoints with IJK is
+  exactly how a full circle is written, and a zero sweep is exactly the wrong
+  reading of it); **G18/G19 pair I/J/K with the wrong axes**, sending the arc
+  somewhere else; **the `R` form ignores its sign**, where negative means the
+  major arc — the long way round; **any line with a G-word emits a move**, so
+  `G21` alone becomes a zero-length move
+- [x] Added: **G20/G21** (absent entirely upstream, so an imperial file reads
+  25.4× too small), G90/G91, both comment forms including inline `(...)`,
+  spindle and tool tracking, per-move source line numbers
+- [x] `flattenMoves` interpolates arcs to a chord tolerance, for drawing
+- [ ] G54–G59 work offsets
 
 ### 1.12 Verification harness
-- [ ] **Round-trip property test**: `render(toolpath) ≈ render(parse(emit(toolpath)))` within tolerance. If this holds, the post-processor is provably correct
-- [ ] **Geometric verifier**: rasterize the swept tool volume and assert removed material matches the intended region. Catches wrong offset side, missed pass, tab at wrong depth — things a byte-diff never would
-- [ ] Golden-file tests for emitted G-code (catches formatting regressions only — the verifier catches real bugs)
-- [ ] Use jscut's checked-in `test.svg` as an import fixture
-
-> **Phase 1 exit criteria:** `npm test` green, and a CLI script turns an SVG into
-> G-code that renders correctly on ncviewer.com. No UI required.
-
----
+- [x] **Round-trip property test**: the emitted program is parsed back,
+  interpolated, and the traced motion compared against the toolpath that was
+  planned. Holds within the arc tolerance across straight, curved and mixed
+  geometry, in millimetres and inches. This is the check that has caught what
+  unit tests did not.
+- [x] `lab/gcode.mjs` runs it on every invocation and prints the worst deviation
+- [x] `lab/simulate.mjs` draws a `.nc` file the way a controller would run it,
+  knowing nothing about how it was made. Arcs are coloured separately on purpose
+  — one that has gone somewhere it should not appears as a violet bulge rather
+  than hiding among identical green lines. Greg: *"once we have it actually
+  working and simulating if there's any weirdness with the arcs it will reveal
+  itself."*
+- [ ] Feed-rate and machine-limit checks
+- [ ] Golden-file comparison against known-good output
 
 ## Phase 2 — App shell
 
