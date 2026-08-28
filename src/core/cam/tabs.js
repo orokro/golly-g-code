@@ -236,16 +236,6 @@ export function placeTabs(source, toolpath, tabs, options = {}) {
 		const a = projectOnto(toolpath, from, toolLengths);
 		const b = projectOnto(toolpath, to, toolLengths);
 
-		// Where the source has a feature the cutter cannot enter, the toolpath
-		// runs past it rather than into it, and a tab end there is nowhere near
-		// the toolpath. The material stays put regardless -- the tool never
-		// reaches it -- but the tab is not doing the job it was placed to do,
-		// and that is not something to find out by looking at the part.
-		const reach = Math.min(a.offset, b.offset) * 1.5;
-		if (Math.max(a.offset, b.offset) > Math.max(reach, 0.01))
-			warnings.push(`the tab at ${position} sits where the cutter cannot follow the line;`
-				+ ' the material there is already uncut, so the tab adds nothing');
-
 		raw.push({
 			start: Math.min(a.distance, b.distance),
 			end: Math.max(a.distance, b.distance),
@@ -372,4 +362,140 @@ function cutRun(toolpath, lengths, from, to) {
 	points.push(pointAt(toolpath, to, lengths));
 
 	return { points, start: from, end: to };
+}
+
+
+/**
+ * Measures the material actually left standing along the source.
+ *
+ * ## Why this exists, and why it replaced a guess
+ *
+ * An earlier version tried to spot a useless tab cheaply, by noticing when one
+ * of its ends projected onto the toolpath from much further away than the offset
+ * distance. The reasoning was that such an end sits in a crevice the cutter
+ * cannot enter, so the tab is not doing its job. On Greg's skyline it flagged
+ * two of four tabs as adding nothing.
+ *
+ * It was wrong, and he spotted it from the picture: those two tabs leave 8.90mm
+ * and 9.90mm of material standing, against the 8mm asked for. An end in a
+ * crevice says nothing about the bridge as a whole — if anything the unreachable
+ * material makes the bridge LARGER.
+ *
+ * So the guess is gone and this measures the thing itself: sweep the cutter
+ * along the runs that are actually cut, and report the stretches of source it
+ * never reaches. No heuristic, and it answers the question a person actually has
+ * — "is my part held, and by what?" — rather than a proxy for it.
+ *
+ * Note that it reports ALL standing material, not only tabs. Detail finer than
+ * the cutter leaves bridges of its own, and those hold the part just as well.
+ * On the same skyline at 3.175mm there are around fifty of them.
+ *
+ * @param {Array<Number[]>} source - the part edge
+ * @param {Array<Object>} runs - the runs actually cut, from `planPass`
+ * @param {Number} toolRadius - cutter radius, millimetres
+ * @param {Object} [options] - options
+ * @param {Number} [options.resolution=0.05] - sampling step along the source
+ * @param {Number} [options.minimum=0.2] - shortest bridge worth reporting
+ * @returns {Array<Object>} `{ start, end, length }` in source arc length
+ * @throws {RangeError} when the tool radius is not positive
+ */
+export function measureBridges(source, runs, toolRadius, options = {}) {
+
+	const { resolution = 0.05, minimum = 0.2 } = options;
+
+	if (!(toolRadius > 0))
+		throw new RangeError(`tool radius must be positive, got ${toolRadius}`);
+
+	if (source.length < 2)
+		return [];
+
+	// The cutter sweeps the SEGMENTS of each run, so the test is distance to a
+	// segment. Sampling those segments as points instead looks equivalent and is
+	// not: the covered region dips between two samples, and because the toolpath
+	// runs tangent to the source, a radial error of e turns into a longitudinal
+	// error of sqrt(2 r e) at the ends of every bridge. Sampling at a quarter of
+	// the tool radius measured a requested 8mm bridge as 7.40mm.
+	const segments = [];
+	for (const run of runs) {
+		const points = run.points ?? run;
+		for (let i = 0; i + 1 < points.length; i++)
+			segments.push([points[i], points[i + 1]]);
+	}
+
+	// a uniform grid over the segments, or this is a few million checks
+	const cell = Math.max(toolRadius * 2, 1e-6);
+	const grid = new Map();
+	const add = (key, index) => {
+		const bucket = grid.get(key);
+		if (bucket === undefined)
+			grid.set(key, [index]);
+		else
+			bucket.push(index);
+	};
+
+	segments.forEach(([a, b], index) => {
+		const minX = Math.floor(Math.min(a[0], b[0]) / cell);
+		const maxX = Math.floor(Math.max(a[0], b[0]) / cell);
+		const minY = Math.floor(Math.min(a[1], b[1]) / cell);
+		const maxY = Math.floor(Math.max(a[1], b[1]) / cell);
+		for (let x = minX; x <= maxX; x++)
+			for (let y = minY; y <= maxY; y++)
+				add(`${x},${y}`, index);
+	});
+
+	/**
+	 * Distance from a point to one segment.
+	 *
+	 * @param {Number[]} point - the query point
+	 * @param {Number[]} a - segment start
+	 * @param {Number[]} b - segment end
+	 * @returns {Number} the distance
+	 */
+	const toSegment = (point, a, b) => {
+		const vx = b[0] - a[0];
+		const vy = b[1] - a[1];
+		const lengthSquared = (vx * vx) + (vy * vy);
+		let t = lengthSquared === 0
+			? 0
+			: ((((point[0] - a[0]) * vx) + ((point[1] - a[1]) * vy)) / lengthSquared);
+		t = Math.max(0, Math.min(1, t));
+		return Math.hypot(point[0] - (a[0] + (t * vx)), point[1] - (a[1] + (t * vy)));
+	};
+
+	const cutAway = (point) => {
+		const cx = Math.floor(point[0] / cell);
+		const cy = Math.floor(point[1] / cell);
+		for (let x = cx - 1; x <= cx + 1; x++)
+			for (let y = cy - 1; y <= cy + 1; y++)
+				for (const index of grid.get(`${x},${y}`) ?? [])
+					if (toSegment(point, segments[index][0], segments[index][1]) <= toolRadius)
+						return true;
+		return false;
+	};
+
+	const lengths = arcLengths(source);
+	const total = lengths[source.length - 1];
+	const bridges = [];
+	let open = null;
+
+	for (let s = 0; s <= total; s += resolution) {
+
+		if (cutAway(pointAt(source, s, lengths))) {
+			if (open !== null) {
+				bridges.push(open);
+				open = null;
+			}
+		} else if (open === null) {
+			open = { start: s, end: s };
+		} else {
+			open.end = s;
+		}
+	}
+
+	if (open !== null)
+		bridges.push(open);
+
+	return bridges
+		.map((b) => ({ ...b, length: b.end - b.start }))
+		.filter((b) => b.length >= minimum);
 }

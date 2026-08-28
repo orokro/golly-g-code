@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { arcLengths, pointAt, projectOnto, placeTabs, planPass, tabBreaks } from './tabs.js';
+import { arcLengths, pointAt, projectOnto, placeTabs, planPass, tabBreaks, measureBridges } from './tabs.js';
 import { offsetAlongNormals, Side } from './openOffset.js';
 import { computeDepthPasses } from './depth.js';
 
@@ -281,5 +281,47 @@ describe('per-tab depth and length, with job defaults', () => {
 
 		expect(planPass(source, spans, -2)).toHaveLength(2);
 		expect(planPass(source, spans, -4)).toHaveLength(3);
+	});
+});
+
+
+describe('measuring what is actually left holding the part', () => {
+
+	const TOLERANCE = 0.005;
+	const R = 1.5875;
+
+	it('finds a bridge exactly where the tab is, the size the tab is', () => {
+		const source = [[0, 0], [200, 0]];
+		const { path } = offsetAlongNormals(source, R, { side: Side.LEFT, tolerance: TOLERANCE });
+		const { spans } = placeTabs(source, path, [{ position: 0.5, length: 8, depth: 3 }]);
+		const runs = planPass(path, spans, -4);
+
+		const bridges = measureBridges(source, runs, R);
+		expect(bridges).toHaveLength(1);
+		expect(bridges[0].length).toBeCloseTo(8, 0);
+		expect((bridges[0].start + bridges[0].end) / 2).toBeCloseTo(100, 0);
+	});
+
+	it('finds nothing standing on a pass the tab does not break', () => {
+		const source = [[0, 0], [200, 0]];
+		const { path } = offsetAlongNormals(source, R, { side: Side.LEFT, tolerance: TOLERANCE });
+		const { spans } = placeTabs(source, path, [{ position: 0.5, length: 8, depth: 3 }]);
+		expect(measureBridges(source, planPass(path, spans, -2), R)).toEqual([]);
+	});
+
+	it('reports detail finer than the cutter as the bridge it is', () => {
+		// a notch 1mm wide against a 3.175mm cutter: the tool cannot get in, so
+		// that material stands whether or not anybody asked for a tab there
+		const source = [[0, 0], [40, 0], [40, 10], [41, 10], [41, 0], [80, 0]];
+		const { path } = offsetAlongNormals(source, R, { side: Side.LEFT, tolerance: TOLERANCE });
+		const runs = planPass(path, [], -4);
+
+		const bridges = measureBridges(source, runs, R);
+		expect(bridges.length).toBeGreaterThan(0);
+		expect(Math.max(...bridges.map((b) => b.length))).toBeGreaterThan(2);
+	});
+
+	it('rejects a non-positive tool radius', () => {
+		expect(() => measureBridges([[0, 0], [1, 0]], [], 0)).toThrow(RangeError);
 	});
 });

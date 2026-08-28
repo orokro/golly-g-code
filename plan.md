@@ -351,9 +351,27 @@ three run straight through it as if it were not there. A tab at 0 is never cut.
   full-depth toolpath, not against the span arithmetic. Further into the kerf
   the disc reaches r ahead and behind, so an L-long tab is L − 2r at the outer
   edge; at L = 2r it is a knife edge, which `placeTabs` warns about.
-- [x] Warns when a tab lands where the cutter cannot follow the line — in a
-  crevice narrower than the tool the material is already uncut and the tab adds
-  nothing. Two of four default positions on Greg's skyline.
+- [x] ~~Warns when a tab lands where the cutter cannot follow the line~~
+  **Removed — the heuristic was wrong.** It flagged a tab when one END projected
+  onto the toolpath from further away than the offset, reasoning that the end sat
+  in a crevice the cutter could not enter and so the tab was doing nothing. On
+  Greg's skyline it called two of four tabs useless. He did not believe it from
+  the picture and he was right: measured, those two leave **23.70mm** and
+  **22.30mm** standing against the 8mm asked for. Unreachable material makes a
+  bridge LARGER, not smaller. An end in a crevice says nothing about the bridge.
+- [x] `measureBridges(source, runs, toolRadius)` replaces the guess with the
+  measurement: sweep the cutter along the runs actually cut and report the
+  stretches of source it never reaches. Answers the question a person really has
+  — "is my part held, and by what?" — instead of a proxy for it. It reports ALL
+  standing material, not just tabs: on that skyline at 3.175mm there are **35
+  bridges of 3mm or more**, holding 345mm of a 528mm edge, because the drawing
+  has far more detail than the cutter can enter. The part was never in danger of
+  coming loose; if anything it is barely being cut out at all.
+  Distance is measured to the run SEGMENTS, not to samples along them. Sampling
+  looks equivalent and is not — the toolpath runs tangent to the source, so a
+  radial error of e becomes a longitudinal error of sqrt(2·r·e) at every bridge
+  end, and sampling at a quarter of the tool radius measured a requested 8mm
+  bridge as 7.40mm.
 - [ ] ~~Cutting each unbroken run to full depth before moving on~~ — would save
   retracts. Greg: *"that's less interesting."* Not doing it.
 - [ ] Dragging a tab along the path, and editing its depth and length, in the
