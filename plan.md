@@ -373,11 +373,42 @@ look-ahead planner decelerate through curves.
 - [ ] Tests: fitted arc deviation asserted ≤ tolerance; file-size reduction measured
 
 ### 1.10 Post-processor
-- [ ] Interface: `{ preamble, rapid, feed, arc, spindleOn, spindleOff, setRPM, toolChange, dwell, postamble }`
-- [ ] **GRBL post** (the real target): `G21`/`G20`, `G90`, `G17`, real `G0` for rapids (jscut wrongly uses `G1` at rapid feed for everything), `M3 S…` / `M5`, `M2`
-- [ ] Tool-change breaks between Tool groups: `M5`, retract, `M0` pause with a comment naming the next tool
-- [ ] Configurable decimal places (jscut hard-codes 4)
-- [ ] `;<job name="…">` … `;</job>` breadcrumb comments around each job's block — needed for Timeline line-mapping, editor highlighting, and the stretch-goal round-trip
+`src/core/post/grbl.js` is the dialect (how a move becomes text);
+`src/core/post/program.js` is the walker (what to ask for, in what order, and
+safely). Swapping the dialect is how another controller, or a laser, gets
+supported (D12).
+- [x] Dialect interface: `preamble, postamble, comment, rapid, feed, spindleOn,
+  spindleOff, dwell, toolChange`
+- [x] **GRBL post**: `G21`/`G20`, `G90`, `G17`, `G94`, real `G0` for rapids,
+  `M3 S…` with a spin-up dwell, `M5`, `M2`
+- [x] **Rapids are `G0`, not a fast `G1`.** jscut emits `G1` at rapid feed for
+  every positioning move. Those are different instructions: `G0` lets the
+  controller use its own rapid profile, `G1` is a coordinated feed move the
+  planner treats as cutting — and it makes a positioning move indistinguishable
+  from a cut to anything reading the file back, human included.
+- [x] Configurable decimal places (jscut hard-codes 4, which at 0.0001mm is
+  three orders finer than a hobby router resolves and just inflates the file).
+  Trailing zeros trimmed; negative zero normalised away.
+- [x] **Refuses to emit a non-finite coordinate** rather than writing
+  `G1 XNaN YNaN`, which is what jscut's dead tab path does
+- [x] Modal output: axis words only when they change, feed only when it changes.
+  Comparison is on the FORMATTED value, so two positions a nanometre apart never
+  become a move.
+- [x] **Invariant: never rapids in X or Y below safe Z**, enforced at the point
+  of emission and asserted by reading the emitted text back. Also rejects a plan
+  whose safe Z is not above every pass — the guard is stated relative to safe Z,
+  so it cannot catch a safe Z that is itself in the work.
+- [x] Tool-change breaks: `M5`, retract, comment naming the tool, `M0` pause,
+  restart the spindle. No restart between jobs sharing a tool and speed.
+- [x] `;<job name="…">` … `;</job>` breadcrumbs, with characters that would
+  break the comment stripped from the name
+- [x] **Round-trip test**: an independent reader in the test file parses the
+  emitted text and checks the cutting moves reproduce every point of every run
+  in order, at the right depth and feed. It shares no code with the emitter, so
+  a bug there cannot hide behind a matching bug in the check.
+- [x] `lab/gcode.mjs` runs the whole pipeline: SVG → offset → tabs → passes →
+  `.nc`. Greg's skyline at 3.175mm, 4mm stock cut 5mm in 5 passes: 3746 lines,
+  45 rapids, 22 plunges, 71 KiB.
 - [ ] Stub post for `ncviewer.com` dialect differences if any surface during verification
 
 ### 1.11 G-code parser (test oracle, not pipeline)

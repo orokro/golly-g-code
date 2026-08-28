@@ -13,3 +13,5 @@ coverage
 
 # generated lab reports
 /lab-output
+
+lab-output/
