@@ -38,3 +38,76 @@ export {
 	diffStates,
 	reachable,
 } from './project/snapshot.js';
+
+export {
+	NodeType,
+	FolderRole,
+	Kind,
+	Quantity,
+	Combine,
+	ToolChange,
+	JobOperation,
+	FIELDS,
+	ALLOWED_CHILDREN,
+	ORDERED_ROLES,
+	fieldsOf,
+	fieldSpec,
+	createNode,
+} from './project/nodes.js';
+
+export {
+	DOCUMENT_VERSION,
+	createProject,
+	referencedGeometry,
+	collectGeometry,
+} from './project/document.js';
+
+export {
+	parentIndex,
+	parentOf,
+	childrenOf,
+	ancestorsOf,
+	ancestorOfType,
+	descendantsOf,
+	isVisible,
+	isLocked,
+	folderOf,
+	cuttingOrder,
+	validateTree,
+} from './project/tree.js';
+
+export {
+	Source,
+	resolveField,
+	resolveNode,
+	resolvedValues,
+	overridesOf,
+	dependentsOf,
+} from './project/inherit.js';
+
+export {
+	SCHEMAS,
+	validateNode,
+	validateDocument,
+	validateValue,
+} from './project/schema.js';
+
+export {
+	Level,
+	DepthClass,
+	DEPTH_EPSILON,
+	classifyDepth,
+	diagnose,
+	blocksExport,
+	byNode,
+} from './project/diagnostics.js';
+
+export {
+	setField,
+	clearOverride,
+	addNode,
+	removeNode,
+	moveNode,
+	reorderChildren,
+	setReferences,
+} from './project/commands.js';

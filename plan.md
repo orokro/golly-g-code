@@ -722,18 +722,82 @@ snapshot for undo, invalidate G-code (5.2), and replace the node refs. Per-node
 reactivity, exact, no proxies. Written up in `src/renderer/CONVENTIONS.md`.
 
 - [ ] Store is a **factory, not a singleton**, keyed by project id — this is the whole cost of leaving the door open for multi-project tabs (Stretch 2), and it's near zero if done now
-- [ ] Node types: `Project`, `Folder(Jobs|SVGs|References)`, `Tool`, `Job`, `Tab`, `SvgDoc`, `SvgPath`, `ReferenceImage`, `WorkMaterial`
-- [ ] Every node: stable uuid, `name`, `locked`, `visible`
-- [ ] Tree ordering is meaningful for `Jobs\` (emission order) and cosmetic elsewhere
-- [ ] Selection state (multi-select, active node)
+- [x] Node types: `Project`, `Folder(Jobs|SVGs|References)`, `Tool`, `Job`, `Tab`, `SvgDoc`, `SvgPath`, `ReferenceImage`, `WorkMaterial`
+- [x] Every node: stable uuid, `name`, `locked`, `visible`. Lock and visibility are
+  inherited DOWNWARDS and derived, never written into the child — so unhiding a
+  folder brings back exactly what was showing before
+- [x] Tree ordering is meaningful for `Jobs\` (emission order) and cosmetic elsewhere.
+  `cuttingOrder` is a straight walk of the tree; nothing sorts or optimises
+- [x] Selection state (multi-select, active node), in the document so undo restores it
+- [x] **No `parent` field.** The tree is `children` arrays and nothing else; a
+  parent is derived. Two copies of the tree is two things to keep correct, and
+  the derived one is not the copy that goes wrong
+- [x] **Geometry lives outside the document.** An SvgPath holds a geometry id, not
+  points. Undo copies the subtrees a command touches, so points in a node would
+  mean cloning 40,000 numbers to record that a path was renamed. Geometry is
+  immutable and keyed, so changing it means pointing at a new id — which undo
+  restores for free. Unreferenced entries are collected on SAVE, never on undo:
+  the entry an undo just orphaned is the one its redo wants back
+- [x] `validateTree` for shape (dangling children, orphans, a Job outside a Tool,
+  a reference to a deleted path) — separate from schema validation, which is
+  values. They fail for different reasons at different times
+- [x] Commands for every edit, with `touches` correct and proven by `verify`
 
-### 3.3 Settings tiers (D7)
-- [ ] **Document/machine**: display units · workspace size · work zero (puck) · safe Z · material thickness · **cut-through allowance** · rapid rate · tooling type
-- [ ] **Tool**: diameter · angle · flute count *(not overridable — physical)* · default pass depth · stepover · plunge rate · cut feed · spindle RPM
-- [ ] **Job**: cut depth · operation · margin · combine · direction · ramp · tabs · lead-in/out · dogbones · **plus overrides of any Tool default**
-- [ ] **Live-linked inheritance**, not copy-at-creation. Change a Tool's cut feed and every non-overridden job follows immediately
-- [ ] Inherited fields render in the distinct (yellow) state with a "uses tool value" tooltip; the reset button restores the *link*, not just the value
-- [ ] Valibot schema per node type, driving both Inspector rendering and validation
+### 3.3 Settings tiers (D7) — done
+
+- [x] **Document/machine** on the Project node: workspace size · work zero · safe Z ·
+  material thickness · **cut-through allowance** · rapid rate · tool change ·
+  spindle dwell · default tab length and depth. *Display units and G-code decimal
+  places deliberately stay APPLICATION settings: they change how a number is
+  shown, not what gets cut, and carrying a presentation choice between projects
+  is harmless where carrying a material thickness is not. plan.md listed display
+  units here; this is a deliberate departure.*
+- [x] **Tool**: diameter · angle · flute count *(physical, so no Job field exists to
+  override it — an invariant the field table is tested for)* · pass depth ·
+  stepover · plunge rate · cut feed · spindle RPM
+- [x] **Job**: paths · cut depth · operation · margin · band width · combine ·
+  direction · offset side and heading · ramp · lead-in/out · dogbones · **plus
+  overrides of pass depth, stepover, plunge rate, cut feed and spindle RPM**
+- [x] **Live-linked inheritance**, not copy-at-creation. ABSENT means inherited —
+  which is why `createNode` leaves inheritable fields out rather than filling in
+  the default. A job carrying `passDepth: 1` looks identical to an inherited one
+  and behaves completely differently six months later
+- [x] `resolveField` returns the value AND its provenance, so the Inspector's
+  inherited state and reset button come from one call. Reset deletes the key,
+  restoring the LINK — writing today's tool value into the job would look the
+  same and be wrong the next time the tool is corrected
+- [x] `dependentsOf` answers the other direction: which jobs a tool's value is
+  actually reaching. Needed for staleness in 5.2
+- [x] **One field table drives everything**: defaults, the Valibot schema, what
+  inherits, and what the Inspector renders. Written by hand in four places is
+  four places to drift — jscut's six unit dropdowns and its `makeAllSameUnit()`
+  are what that looks like at the end
+
+### 3.3a Diagnostics — new, and the reason 3.3 changed shape
+
+Cut depth is an explicit number and **nothing recalculates it** when the material
+changes. Greg's call, over my recommendation of a derived "through" mode, and the
+right one: a depth that moves under you is a depth you cannot trust.
+
+That needs something to make a change of stock visible, and D17 rules out the
+obvious thing. The kerf IS the artwork — a cut that does not reach through is
+most of what this program is for, so flagging it teaches you to ignore flags. So
+diagnostics have three levels, and the interesting one is the quiet one:
+
+- **info** — what will happen, always shown, never coloured like a problem.
+  "Cuts 1.00mm of 4.00mm — 3.00mm left below." Change the stock from 4mm to 18mm
+  and twelve jobs that read "through" now read "13.00mm left". *That sentence
+  changing is the entire notification mechanism.* Nothing had to shout.
+- **warning** — probably not meant, and the machine will still do it: past the
+  cut-through allowance into the spoilboard, two tabs overlapping into one, a tab
+  as deep as the cut it is supposed to break.
+- **error** — no toolpath can be made. Blocks export (5.4): no paths, no depth,
+  no diameter, safe Z at or below the surface, an operation that needs a closed
+  path on an open one.
+
+Deliberately **not** reported, and tested for: a through cut with no tabs (both
+halves may be clamped; "is the part held" is the wrong question when nothing is
+being freed), detail finer than the bit, a pass depth larger than the cut depth.
 
 ### 3.4 Project file I/O
 - [ ] `.gollyg` zip container: `project.json` + `assets/` (reference images) + `svg/` (originals verbatim, so they stay re-importable)
