@@ -90,6 +90,31 @@ export default [
 		},
 	},
 
+	// --------------------------------------------- shallow reactivity only
+	// See src/renderer/CONVENTIONS.md. Deep reactivity wraps every nested object
+	// in a proxy, and the proxies leak: structuredClone throws on them, object
+	// identity stops being stable, any library handed one stores it, and the
+	// cost is per property access on data that is toolpaths with tens of
+	// thousands of points. `shallowReactive` where scalars must be written in
+	// place from outside our code, `shallowRef` everywhere else.
+	//
+	// `ref` is deliberately NOT restricted: it is correct for scalars and for
+	// template refs, and lint cannot tell those from `ref({...})`. That one is
+	// left to review.
+	{
+		files: ['src/renderer/**/*.js', 'src/renderer/**/*.vue'],
+
+		rules: {
+			'no-restricted-imports': ['error', {
+				paths: [{
+					name: 'vue',
+					importNames: ['reactive'],
+					message: 'Use shallowReactive (a one-level proxy) or shallowRef. See src/renderer/CONVENTIONS.md.',
+				}],
+			}],
+		},
+	},
+
 	// ------------------------------------------------- the src/core fence
 	// See the file header. These rules keep the CAM core headless.
 	{

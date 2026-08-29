@@ -40,7 +40,7 @@
 
 <script setup>
 
-import { ref, computed, reactive, provide, onMounted, onBeforeUnmount, watchEffect } from 'vue';
+import { ref, computed, shallowReactive, provide, onMounted, onBeforeUnmount, watchEffect } from 'vue';
 import { WindowManager } from 'vue-win-mgr';
 import { createSettings } from 'vue-settings-panel';
 
@@ -60,8 +60,8 @@ const managerEl = ref(null);
 /**
  * Every application setting, live.
  *
- * `createSettings` fills the spec's defaults into a `reactive` object, so this
- * is the one place an application setting exists. The Settings window is given
+ * `createSettings` supplies the spec's defaults, and this is the one place an
+ * application setting exists. The Settings window is given
  * THIS object rather than a copy of it: the panel writes straight into it, and
  * anything derived from it here updates without a synchronising step.
  *
@@ -70,11 +70,17 @@ const managerEl = ref(null);
  * header button restyled the app but not the panel; the panel's own theme
  * picker did nothing and reported the wrong value. Both were the same bug.
  *
- * The `reactive` wrapper is belt and braces: it is a no-op on something that
- * is already reactive, and it is the difference between a loud failure and a
- * silently dead UI if the library ever stops returning one.
+ * `shallowReactive`, not `reactive`, per CONVENTIONS.md: a one-level proxy, so
+ * writes to these scalars trigger and nothing nested is ever wrapped. The spread
+ * reads the values out of whatever `createSettings` returns, so this owns a
+ * plain object of its own rather than layering a proxy over the library's.
+ *
+ * The panel writes into it with `settings[key] = value`, guarded by an
+ * `isReactive` check -- which `shallowReactive` satisfies. Read out of the
+ * library's source rather than assumed, along with the fact that it emits the
+ * whole settings object and not the changed key.
  */
-const settings = reactive(createSettings(settingsSpec));
+const settings = shallowReactive({ ...createSettings(settingsSpec) });
 provide('appSettings', settings);
 
 /**

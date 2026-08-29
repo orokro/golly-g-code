@@ -29,7 +29,7 @@
  * sense of.
  */
 
-import { reactive, toRaw } from 'vue';
+import { shallowReactive } from 'vue';
 import { onSerialize, onLayoutLoad } from 'vue-win-mgr';
 
 /**
@@ -97,11 +97,14 @@ export function useWindowState(defaults, options = {}) {
 		restore = onLayoutLoad,
 	} = options;
 
-	const state = reactive({ ...defaults });
+	// shallowReactive per CONVENTIONS.md: window state is a flat bag of scalars,
+	// so a one-level proxy triggers on every write it will ever see and nothing
+	// nested is wrapped. That also makes the spread below plain data already --
+	// the earlier version wrapped it in toRaw because a deep proxy is not
+	// JSON-safe in every engine, and the layout has to serialise cleanly
+	const state = shallowReactive({ ...defaults });
 
-	// toRaw, because a reactive proxy is not JSON-safe in every engine and the
-	// layout has to serialise cleanly
-	register(() => ({ ...toRaw(state) }));
+	register(() => ({ ...state }));
 
 	restore((saved) => {
 		Object.assign(state, reconcile(saved, defaults));

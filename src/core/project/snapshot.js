@@ -62,14 +62,17 @@
 /**
  * Deep-copies plain project data.
  *
- * Not `structuredClone`, which throws `DataCloneError` on a Proxy — and the
- * state this runs against will be a Vue `reactive()` proxy the moment 3.2 wires
- * it into the renderer. Property reads go through the proxy's traps, so a
- * hand-written walk sees straight through it and a built-in cannot.
+ * Not `structuredClone`, for two reasons, and the second is the important one.
  *
  * It refuses anything that is not plain data rather than quietly producing a
  * shallow or empty copy of it: a Date or a Map that came back from undo as `{}`
- * would be a corrupted document with no error attached to it.
+ * would be a corrupted document with no error attached to it. Rule 5.
+ *
+ * And `structuredClone` throws `DataCloneError` on a Proxy, where a hand-written
+ * walk reads straight through the traps. The renderer's convention is shallow
+ * reactivity only (see `renderer/CONVENTIONS.md`), so project state is a plain
+ * object and no proxy should ever reach this — but "should never" is a rule
+ * someone eventually breaks, and the cost of being immune to it is nothing.
  *
  * @param {*} value - plain data: primitives, arrays, plain objects
  * @param {String} [path] - where we are, for the error message

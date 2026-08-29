@@ -710,6 +710,17 @@ trimming the wrong end, `seal()` doing nothing, and the `verify` diff short-
 circuited. Each one fails tests that name it.
 
 ### 3.2 Project store
+
+**Reactivity is shallow throughout** — `shallowRef` / `shallowReactive`, never
+`ref` on an object and never `reactive`. Greg's standing convention, and it fits
+3.1 rather than fighting it: deep proxies break `structuredClone`, destroy object
+identity, get stored by every library handed one, and cost per property access on
+data that is toolpaths with tens of thousands of points. Shallow means
+reactivity triggers on replacement rather than mutation, so the store has to say
+what changed — which `touches` already does. That one list now does three jobs:
+snapshot for undo, invalidate G-code (5.2), and replace the node refs. Per-node
+reactivity, exact, no proxies. Written up in `src/renderer/CONVENTIONS.md`.
+
 - [ ] Store is a **factory, not a singleton**, keyed by project id — this is the whole cost of leaving the door open for multi-project tabs (Stretch 2), and it's near zero if done now
 - [ ] Node types: `Project`, `Folder(Jobs|SVGs|References)`, `Tool`, `Job`, `Tab`, `SvgDoc`, `SvgPath`, `ReferenceImage`, `WorkMaterial`
 - [ ] Every node: stable uuid, `name`, `locked`, `visible`
