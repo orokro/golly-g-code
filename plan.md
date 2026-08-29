@@ -709,7 +709,7 @@ instead of in two passes, coalescing clobbering its `before`, the depth limit
 trimming the wrong end, `seal()` doing nothing, and the `verify` diff short-
 circuited. Each one fails tests that name it.
 
-### 3.2 Project store
+### 3.2 Project store — done
 
 **Reactivity is shallow throughout** — `shallowRef` / `shallowReactive`, never
 `ref` on an object and never `reactive`. Greg's standing convention, and it fits
@@ -721,7 +721,23 @@ what changed — which `touches` already does. That one list now does three jobs
 snapshot for undo, invalidate G-code (5.2), and replace the node refs. Per-node
 reactivity, exact, no proxies. Written up in `src/renderer/CONVENTIONS.md`.
 
-- [ ] Store is a **factory, not a singleton**, keyed by project id — this is the whole cost of leaving the door open for multi-project tabs (Stretch 2), and it's near zero if done now
+- [x] Store is a **factory, not a singleton**, keyed by project id — this is the whole cost of leaving the door open for multi-project tabs (Stretch 2), and it's near zero if done now
+- [x] `nodeRef(id)` hands out a `shallowRef` per node; after every commit the store
+  republishes the refs for the nodes a history entry actually touched, taken from
+  the union of its before and after snapshots. Selection, `revision`, `dirty`,
+  diagnostics and the undo labels all fall out of the same publish
+- [x] `load()` refills the document IN PLACE rather than swapping the object, so
+  every caller holding `store.document` keeps working — and clears the history,
+  because one undo across a load would splice the previous project into this one
+- [x] **A correction worth keeping.** Mutating the store to republish *every* ref
+  on every commit broke no test. It is not a regression: `shallowRef` compares
+  with `Object.is`, and an untouched node is still the same object, so the
+  assignment is a no-op. Object identity is what makes this fine-grained — the
+  touched set is what makes it CORRECT, because undo and redo restore clones, so
+  every node inside a restored subtree is a new object and a view that is not
+  republished holds the detached original forever with no error. Publishing only
+  the ids named in `touches`, rather than their whole subtrees, is the real bug,
+  and it now fails four tests
 - [x] Node types: `Project`, `Folder(Jobs|SVGs|References)`, `Tool`, `Job`, `Tab`, `SvgDoc`, `SvgPath`, `ReferenceImage`, `WorkMaterial`
 - [x] Every node: stable uuid, `name`, `locked`, `visible`. Lock and visibility are
   inherited DOWNWARDS and derived, never written into the child — so unhiding a
