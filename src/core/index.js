@@ -22,3 +22,19 @@ export {
 	feedToMillimetersPerMinute,
 	feedFromMillimetersPerMinute,
 } from './units/units.js';
+
+export {
+	createHistory,
+	DEFAULT_LIMIT,
+	DEFAULT_COALESCE_WINDOW_MS,
+} from './project/history.js';
+
+export {
+	nodeDriver,
+	cloneData,
+	capture,
+	restore,
+	cloneState,
+	diffStates,
+	reachable,
+} from './project/snapshot.js';

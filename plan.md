@@ -656,13 +656,58 @@ is the only thing that catches the failure below.
 Goal: the spine everything else hangs off. Get this wrong and undo can never be
 retrofitted.
 
-### 3.1 Command system **[do this first, before any mutation exists]**
-- [ ] Command interface: `{ label, apply(state), revert(state), coalesceKey? }`
-- [ ] Dispatcher owns the only write path into the store. Components never mutate directly
-- [ ] Undo/redo stacks, depth-limited, cleared on project load
-- [ ] Coalescing: a gizmo drag emits **one** command on mouse-up, not one per mousemove
-- [ ] Command commit is also the **G-code regen trigger** — this is why debouncing comes free
-- [ ] Tests: apply/revert round-trip returns identical state for every command type
+### 3.1 Command system **[do this first, before any mutation exists]** — done
+
+- [x] Command interface: `{ label, touches, apply(state), coalesceKey? }`. **Not
+  `revert`.** An inverse per command uses the least memory of anything, and it is
+  the half that is never exercised while you work — an incomplete `revert` does
+  not fail, it leaves the document slightly wrong and you find out several
+  operations later with nothing left to inspect. Instead a command declares which
+  subtrees it will change; the dispatcher copies them before `apply` and again
+  after, and undo and redo are both a restore. Nobody writes an inverse, so
+  nobody writes a wrong one.
+- [x] `touches` earns its keep twice: it is also exactly the set of nodes whose
+  G-code is stale, so the per-job cache invalidation in 5.2 comes free instead of
+  being a second thing to keep in step.
+- [x] **The one way this design can be wrong is a command that changes something
+  it did not declare**, so `verify` mode does the round trip for real on every
+  dispatch — copy the document, run `apply`, put the before-snapshot back, and
+  diff. An under-declared command throws at the point of the mistake, naming the
+  paths. On in tests, off in production. Tested by making the mistake on purpose.
+- [x] Dispatcher owns the only write path into the store. Components never mutate directly
+- [x] Undo/redo stacks, depth-limited, cleared on project load
+- [x] Coalescing: a drag collapses into one entry while the `coalesceKey` holds and
+  the entry is unsealed, keeping its ORIGINAL before-snapshot so undo reaches back
+  to where the drag started. `seal()` on mouse-up or blur is the mechanism; the
+  time window is only a net for the places that forget to call it.
+- [x] Command commit is also the **G-code regen trigger** — one `onCommit` per
+  committed command, so a forty-move drag is one regeneration and debouncing is
+  not a separate mechanism
+- [x] **Redo restores rather than re-running `apply`.** Re-running would be
+  cheaper and would also make every command have to be a pure function of the
+  state — no fresh uuids, nothing read from outside — because a redo that mints a
+  different id leaves every reference to the first pointing at nothing.
+- [x] Selection changes are not commands (clicking around must not fill the undo
+  stack), but every command captures the selection before and after, so undoing a
+  delete gives back the node AND the selection you had. That is why selection
+  lives in the store rather than in a component.
+- [x] Tests: 51 of them, including random sessions of structural edits across 40
+  seeds — apply, undo all the way back, and diff against the start; and undo *k*,
+  redo *k*, and diff against where it was. With `verify` on throughout.
+
+**Two things measured rather than assumed.** `structuredClone` throws
+`DataCloneError` on a Proxy, and the state will be a Vue `reactive()` proxy the
+moment 3.2 wires it in — so snapshots use a hand-written walk that sees through
+the traps, and refuses anything that is not plain data rather than quietly
+returning `{}` for a `Date`. And the first version of the random-session test
+produced exactly **one** coalesce in 2143 commands, so the round-trip claims
+barely covered coalesced entries; a coalescing command now dispatches as a run,
+the way a drag actually arrives.
+
+**Every claim above was mutation-tested**: restoring subtrees one at a time
+instead of in two passes, coalescing clobbering its `before`, the depth limit
+trimming the wrong end, `seal()` doing nothing, and the `verify` diff short-
+circuited. Each one fails tests that name it.
 
 ### 3.2 Project store
 - [ ] Store is a **factory, not a singleton**, keyed by project id — this is the whole cost of leaving the door open for multi-project tabs (Stretch 2), and it's near zero if done now
