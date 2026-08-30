@@ -167,8 +167,21 @@ export function diagnose(project) {
 		if (!(j.cutDepth > 0))
 			say(job.id, Level.ERROR, 'job-depth',
 				`${job.name} has no cut depth.`);
-		else
+		else {
+
 			describeDepth(say, job, j, project_);
+
+			// The tool has to reach from safe Z down to the bottom of the cut, so
+			// that span has to fit inside the machine's Z travel. True wherever
+			// the work zero is set, because it is the SPAN and not the position.
+			const span = project_.safeZ + j.cutDepth;
+
+			if (span > project_.zTravel + DEPTH_EPSILON)
+				say(job.id, Level.ERROR, 'z-travel',
+					`${job.name} needs ${mm(span)} of Z travel — ${mm(project_.safeZ)} of`
+					+ ` safe Z plus ${mm(j.cutDepth)} of cut — and the machine has`
+					+ ` ${mm(project_.zTravel)}.`);
+		}
 
 		checkOperation(say, document, job, j);
 

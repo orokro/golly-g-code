@@ -175,14 +175,26 @@ export const FIELDS = Object.freeze({
 
 		...COMMON,
 
+		// The defaults describe a WolfPawn 4040-PRO: 400 x 400 x 75mm, 500W
+		// spindle, GRBL 1.1F. They are only defaults -- every one of them is a
+		// project setting -- but a default that matches the machine in the room
+		// is one less thing to get wrong on the first job.
 		workspaceWidth: {
 			label: 'Workspace width', desc: 'The machine bed, X.',
-			kind: Kind.NUMBER, quantity: Quantity.LENGTH, default: 600, min: 1, max: 10_000, step: 1,
+			kind: Kind.NUMBER, quantity: Quantity.LENGTH, default: 400, min: 1, max: 10_000, step: 1,
 		},
 
 		workspaceHeight: {
 			label: 'Workspace height', desc: 'The machine bed, Y.',
 			kind: Kind.NUMBER, quantity: Quantity.LENGTH, default: 400, min: 1, max: 10_000, step: 1,
+		},
+
+		zTravel: {
+			label: 'Z travel',
+			desc: 'How far the spindle can move up and down in total. The tool has to'
+				+ ' reach from safe Z all the way to the bottom of the cut, so this is'
+				+ ' a hard limit on safe Z plus cut depth. GRBL knows it as $132.',
+			kind: Kind.NUMBER, quantity: Quantity.LENGTH, default: 75, min: 1, max: 1000, step: 1,
 		},
 
 		workZero: {
@@ -208,8 +220,11 @@ export const FIELDS = Object.freeze({
 		},
 
 		rapidRate: {
-			label: 'Rapid rate', desc: 'How fast the machine moves when it is not cutting.',
-			kind: Kind.NUMBER, quantity: Quantity.FEED, default: 3000, min: 1, max: 30_000, step: 100,
+			label: 'Rapid rate',
+			desc: 'How fast the machine moves when it is not cutting. A lead-screw'
+				+ ' machine is far slower than a belt one; the true figure is $110 and'
+				+ ' $111 in GRBL\'s $$ output.',
+			kind: Kind.NUMBER, quantity: Quantity.FEED, default: 1500, min: 1, max: 30_000, step: 100,
 		},
 
 		toolChange: {
@@ -294,8 +309,11 @@ export const FIELDS = Object.freeze({
 		},
 
 		spindleRpm: {
-			label: 'Spindle speed', desc: 'How fast the spindle turns.',
-			kind: Kind.NUMBER, quantity: Quantity.RPM, default: 18_000, min: 1000, max: 60_000, step: 500,
+			label: 'Spindle speed',
+			desc: 'How fast the spindle turns. A 500W spindle on a machine this size'
+				+ ' tops out around ten thousand; the true ceiling is $30 in GRBL\'s $$'
+				+ ' output, and asking for more than that just gets clamped.',
+			kind: Kind.NUMBER, quantity: Quantity.RPM, default: 10_000, min: 1000, max: 60_000, step: 500,
 		},
 	}),
 

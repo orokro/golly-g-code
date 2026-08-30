@@ -38,6 +38,33 @@ mid-build. If one of these turns out wrong, change it *here* first.
 | D17 | **The kerf is the artwork; we are not freeing a part.** Greg: *"My main goal is to make the bit follow the path I drew, and the width of the cut will show me what detail I'll actually get IRL... I realize there's more detail that would be able to be cut by a 1/8th bit - but I don't really care."* | Reframes several things. Detail finer than the bit is a normal consequence to SEE, not a warning to emit. "Is the part held" is the wrong question — nothing is being cut free. Tabs are hand-placed on straight sections by eye, so no automatic placement and no reasoning about tabs in crevices. What the program owes the user is an honest picture of the cut's width. |
 | D16 | **No spoilboard guardrail.** Model an explicit **cut-through allowance** instead. | Current workflow deliberately cuts into a pre-routed spoilboard groove (vinyl records, O-flute, single pass). Warn only past `thickness + allowance`. |
 
+### The machine
+
+**WolfPawn 4040-PRO**, the $300 one.
+
+| | |
+|---|---|
+| Working area | **400 × 400 × 75mm** (15.7″ × 15.7″ × 2.9″) |
+| Drive | Lead screw, NEMA 17 |
+| Spindle | 500W |
+| Controller | GRBL 1.1F |
+
+These are the defaults on a new Project node. They are still ordinary project
+settings — nothing is hard-coded — but a default that matches the machine in the
+room is one less thing to get wrong on the first job.
+
+The Z figure earns its keep as more than a default: the tool has to reach from
+safe Z all the way to the bottom of the cut, so `safeZ + cutDepth ≤ zTravel` is a
+hard limit, and one that holds wherever the work zero is set because it is the
+SPAN and not the position. Exceeding it is an error that blocks export, since the
+machine will simply refuse to go there.
+
+**Two numbers I have not verified and Greg should correct from GRBL's `$$`
+output**: rapid rate (`$110`/`$111`, defaulted to 1500 mm/min — a lead-screw
+machine is much slower than a belt one) and maximum spindle speed (`$30`,
+defaulted to 10,000 rpm). Asking for more than `$30` just gets clamped by the
+controller, silently.
+
 ### Repo layout
 
 ```

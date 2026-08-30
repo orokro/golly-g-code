@@ -186,6 +186,22 @@ describe('things that stop a program being emitted', () => {
 		expect(find(project, 'safe-z').level).toBe(Level.ERROR);
 	});
 
+	it('a cut the machine cannot physically reach', () => {
+		// safe Z plus cut depth is the SPAN the spindle has to cover, so it is a
+		// limit wherever the work zero happens to be set
+		const { project } = fixture({ cutDepth: 74 }, { safeZ: 5, zTravel: 75, materialThickness: 80 });
+		const said = find(project, 'z-travel');
+
+		expect(said.level).toBe(Level.ERROR);
+		expect(said.message).toMatch(/needs 79\.00mm of Z travel.*machine has 75\.00mm/);
+	});
+
+	it('is quiet when the cut fits, right up to the last tenth', () => {
+		const { project } = fixture({ cutDepth: 70 }, { safeZ: 5, zTravel: 75, materialThickness: 80 });
+
+		expect(codes(project)).not.toContain('z-travel');
+	});
+
 	it('a tool with no cutting diameter', () => {
 		const { project, document, n } = fixture();
 		document.nodes[n.tool.id].diameter = 0;
