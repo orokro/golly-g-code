@@ -866,10 +866,37 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
   wherever it might later be used
 - [x] Side stores pruned on SAVE and only on save — after an undo would throw away
   exactly what the matching redo wants back
-- [ ] New / Open / Save / Save As, wired to Electron `dialog` via `ipcMain.handle` (the template's fire-and-forget `send` channel can't return a path — this needs the `invoke`/`handle` pattern)
-- [ ] macOS `open-file` event + `CFBundleDocumentTypes` so double-clicking a `.gollyg` works *(deferred with D1, but the file association is cheap to declare now)*
-- [ ] Recent files
-- [ ] Dirty tracking + "unsaved changes" prompt on close
+- [x] New / Open / Save / Save As, wired to Electron `dialog` via `ipcMain.handle`
+  (the template's fire-and-forget `send` channel can't return a path — this needs
+  the `invoke`/`handle` pattern, which 0.2 had already put in place)
+- [x] **All of the policy is in the renderer**, in `composables/projectFile.js`,
+  with the Electron surface injected. `main.cjs` shows the dialogs it is asked to
+  show and relays a close request, and nothing more. Logic in main cannot be
+  tested — vitest has no Electron in it — and "did the unsaved-changes prompt
+  actually appear" is exactly the thing that wants a test rather than a habit of
+  remembering to check
+- [x] **One guard.** New, Open, Open Recent and closing the window all go through
+  the same `guard()`. The alternative is four copies of the same three-button
+  dialog and a fifth path somebody adds later that has none
+- [x] A Save that is itself cancelled at the file dialog does NOT then throw the
+  work away — the obvious implementation reads "not Cancel" as "go ahead" and
+  loses everything at the second dialog
+- [x] `markSaved` only after the write RESOLVES. Clearing it first leaves the app
+  claiming there is nothing to save, which is the one state work vanishes from
+- [x] The destructive button is never the default and never under the Enter key
+- [x] macOS `CFBundleDocumentTypes` and `fileAssociations` — already declared
+- [x] Recent files, in localStorage, treated as untrusted on the way back in.
+  A file that will not open is dropped from the list, because an unopenable file
+  is not a recent file
+- [x] Dirty tracking + "unsaved changes" prompt on close. Main asks the renderer
+  and destroys on its answer; a SECOND close request goes through unconditionally,
+  because an application you cannot quit is worse than one that loses a change you
+  were warned about
+- [x] Title bar carries the project name and a bullet for unsaved work, so the
+  marker is visible in the taskbar without the header being on screen
+- [x] Verified in a browser: the header renders, Recent lists what was stored,
+  the dropdown closes on a click elsewhere, and New with no `gollyAPI` present
+  does nothing rather than throwing
 
 ### 3.5 Outliner window
 - [ ] Fixed top-level hierarchy: `Project > Jobs\ > Tool\ > Job > Tab`, plus `SVGs\ > SvgDoc > SvgPath`, `References\`

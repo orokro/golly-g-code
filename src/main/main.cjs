@@ -169,12 +169,60 @@ function createWindow(rendererPort) {
 	// avoid the white flash while the renderer boots
 	mainWindow.once('ready-to-show', () => mainWindow.show());
 
+	mainWindow.on('close', onWindowClose);
 	mainWindow.on('closed', () => { mainWindow = null; });
 
 	if (IS_DEV)
 		mainWindow.loadURL(`http://localhost:${rendererPort}`);
 	else
 		mainWindow.loadURL(`${APP_SCHEME}://${APP_HOST}/index.html`);
+}
+
+
+/**
+ * True once the renderer has said the window may close.
+ *
+ * Main does not decide whether there is unsaved work — the renderer does, since
+ * that is where the store is — so closing is a question asked across the bridge
+ * and this is the answer being remembered long enough to let the second close
+ * through.
+ */
+let closeApproved = false;
+
+/** Set while the renderer is being asked, so a second click does not re-ask. */
+let closeAsked = false;
+
+
+/**
+ * Intercepts the window close and asks the renderer first.
+ *
+ * The renderer owns the unsaved-changes prompt (see composables/projectFile.js),
+ * because that is where the dirty flag and the save logic live, and because
+ * policy in this file cannot be tested — vitest has no Electron in it.
+ *
+ * The escape hatch matters: if the renderer never answers — wedged, crashed
+ * mid-question — a SECOND close request goes through unconditionally. An
+ * application you cannot quit is worse than one that loses a change you were
+ * warned about.
+ *
+ * @param {Object} event - the Electron close event
+ * @returns {void}
+ */
+function onWindowClose(event) {
+
+	if (closeApproved)
+		return;
+
+	event.preventDefault();
+
+	if (closeAsked) {
+		closeApproved = true;
+		mainWindow.destroy();
+		return;
+	}
+
+	closeAsked = true;
+	mainWindow.webContents.send('app:closeRequested');
 }
 
 
@@ -191,6 +239,26 @@ function createWindow(rendererPort) {
 function registerIpcHandlers() {
 
 	ipcMain.handle('app:getVersion', () => app.getVersion());
+
+	ipcMain.handle('dialog:message', async (_event, options) => {
+		const result = await dialog.showMessageBox(mainWindow, options ?? {});
+		return result.response;
+	});
+
+	// the renderer's answer to app:closeRequested. `false` means the user
+	// cancelled, so the window stays open and the next close asks again
+	ipcMain.handle('app:confirmClose', (_event, mayClose) => {
+
+		closeAsked = false;
+
+		if (mayClose !== true)
+			return false;
+
+		closeApproved = true;
+		mainWindow?.destroy();
+
+		return true;
+	});
 
 	ipcMain.handle('dialog:openFile', async (_event, options) => {
 		const result = await dialog.showOpenDialog(mainWindow, options ?? {});

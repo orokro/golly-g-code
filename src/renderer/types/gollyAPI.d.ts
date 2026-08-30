@@ -7,6 +7,9 @@
 
 export interface GollyAPI {
 	getVersion(): Promise<string>;
+	messageBox(options?: object): Promise<number>;
+	onCloseRequested(handler: () => void): () => void;
+	confirmClose(mayClose: boolean): Promise<boolean>;
 	openFileDialog(options?: object): Promise<string[] | null>;
 	saveFileDialog(options?: object): Promise<string | null>;
 	readText(path: string): Promise<string>;

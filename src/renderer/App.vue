@@ -26,7 +26,19 @@
 			@layout-changed="onLayoutChanged"
 		>
 			<template #topBar>
-				<AppHeader :dark="palette.dark" @reset-layout="resetLayout" @toggle-theme="toggleTheme"/>
+				<AppHeader
+					:dark="palette.dark"
+					:name="file.name.value"
+					:dirty="store.dirty.value"
+					:recent="file.recent.value"
+					@new-project="file.newProject"
+					@open-project="file.open"
+					@open-recent="file.open"
+					@save-project="file.save"
+					@save-project-as="file.saveAs"
+					@reset-layout="resetLayout"
+					@toggle-theme="toggleTheme"
+				/>
 			</template>
 
 			<template #statusBar>
@@ -47,8 +59,12 @@ import { createSettings } from 'vue-settings-panel';
 import AppHeader from './AppHeader.vue';
 import AppStatusBar from './AppStatusBar.vue';
 
+import { createProject } from '@core/project/document.js';
+
 import { availableWindows, windowSlugs } from './windows/registry.js';
 import { settingsSpec } from './settings/spec.js';
+import { createProjectStore } from './composables/projectStore.js';
+import { useProjectFile } from './composables/projectFile.js';
 import { defaultLayout } from './layout/defaultLayout.js';
 import { createLayoutStore } from './composables/layoutStore.js';
 import { createRenderDriver } from './composables/renderDriver.js';
@@ -56,6 +72,42 @@ import { presets, windowManagerTheme, applyPalette } from './theme/palette.js';
 
 /** @type {import('vue').Ref} The manager component, for imperative resets. */
 const managerEl = ref(null);
+
+/**
+ * The Electron surface, or a stand-in when there is not one.
+ *
+ * The renderer is also built and driven in a plain browser for verification,
+ * where there is no preload and so no `gollyAPI`. Rather than guard every call
+ * site, the stand-in answers every dialog the way Cancel does: the buttons stay
+ * live and simply do nothing, which is what makes the layout and theming
+ * verifiable outside Electron at all.
+ */
+const api = globalThis.gollyAPI ?? {
+	openFileDialog: async () => null,
+	saveFileDialog: async () => null,
+	messageBox: async () => 2,
+	readBinary: async () => { throw new Error('This build has no access to the filesystem.'); },
+	writeBinary: async () => { throw new Error('This build has no access to the filesystem.'); },
+	onCloseRequested: () => () => {},
+	confirmClose: async () => false,
+};
+
+/**
+ * The open project.
+ *
+ * One store, created here, provided to everything. A factory rather than a
+ * singleton, so multi-project tabs stay possible later without unpicking an
+ * import from every component that ever wanted the document.
+ */
+const store = createProjectStore({ project: createProject() });
+provide('projectStore', store);
+
+/** New, Open, Save, and the unsaved-changes guard they all go through. */
+const file = useProjectFile({ store, api });
+provide('projectFile', file);
+
+/** @type {Function|null} Stops listening for close requests. */
+let unlistenClose = null;
 
 /**
  * Every application setting, live.
@@ -147,14 +199,27 @@ function toggleTheme() {
 	settings.theme = palette.value.dark ? 'light' : 'dark';
 }
 
+// the window title carries the unsaved marker, so it is visible without the
+// header being on screen -- in the taskbar, in a window switcher
+watchEffect(() => { document.title = file.title.value; });
+
 onMounted(() => {
 
 	// A layout change still inside the debounce window when the app quits would
 	// otherwise be lost, which is exactly the change the user just made.
 	window.addEventListener('beforeunload', layoutStore.flush);
+
+	// Main asks before letting the window close; the answer is the same guard
+	// every other destructive action goes through, so closing cannot be the one
+	// path that forgets to ask.
+	unlistenClose = api.onCloseRequested(async () => {
+		layoutStore.flush();
+		await api.confirmClose(await file.requestClose());
+	});
 });
 
 onBeforeUnmount(() => {
+	unlistenClose?.();
 	window.removeEventListener('beforeunload', layoutStore.flush);
 	layoutStore.flush();
 	renderDriver.stop();

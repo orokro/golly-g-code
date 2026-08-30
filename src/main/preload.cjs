@@ -24,6 +24,38 @@ contextBridge.exposeInMainWorld('gollyAPI', {
 	getVersion: () => ipcRenderer.invoke('app:getVersion'),
 
 	/**
+	 * Shows a native message box.
+	 *
+	 * @param {Object} options - Electron MessageBoxOptions
+	 * @returns {Promise<Number>} index of the button the user pressed
+	 */
+	messageBox: (options) => ipcRenderer.invoke('dialog:message', options),
+
+	/**
+	 * Registers the renderer's answer to "may the window close?".
+	 *
+	 * The only push channel in this file. Main cannot decide whether there is
+	 * unsaved work — the store is over here — so it asks, and the renderer
+	 * replies with `confirmClose`.
+	 *
+	 * @param {Function} handler - called with no arguments when a close is attempted
+	 * @returns {Function} call it to stop listening
+	 */
+	onCloseRequested: (handler) => {
+		const listener = () => handler();
+		ipcRenderer.on('app:closeRequested', listener);
+		return () => ipcRenderer.removeListener('app:closeRequested', listener);
+	},
+
+	/**
+	 * Answers a close request.
+	 *
+	 * @param {Boolean} mayClose - true to let the window close
+	 * @returns {Promise<Boolean>} what main did with it
+	 */
+	confirmClose: (mayClose) => ipcRenderer.invoke('app:confirmClose', mayClose),
+
+	/**
 	 * Shows a native open-file dialog.
 	 *
 	 * @param {Object} options - Electron OpenDialogOptions
