@@ -114,9 +114,16 @@ export {
 } from './project/diagnostics.js';
 
 export {
+	prepareSvgImport,
+	uniqueName,
+	summarise,
+} from './project/import.js';
+
+export {
 	setField,
 	clearOverride,
 	addNode,
+	addSubtree,
 	removeNode,
 	moveNode,
 	reorderChildren,

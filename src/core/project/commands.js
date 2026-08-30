@@ -157,6 +157,57 @@ export function addNode(document, parentId, node, options = {}) {
 
 
 /**
+ * Adds a whole subtree under a parent, in one command.
+ *
+ * An SVG import is a document node with a dozen paths under it, and the first
+ * job in an empty project is a Tool with a Job inside it. Both are ONE thing the
+ * user did, so both are one entry in the undo stack — a dozen entries to undo an
+ * import that was one click is not a history, it is a chore.
+ *
+ * The nodes are built by the caller and must already reference each other; only
+ * the first is attached to `parentId`.
+ *
+ * @param {Object} document - the project document
+ * @param {String} parentId - where the first node goes
+ * @param {Object[]} nodes - the subtree, its root first
+ * @param {Object} [options] - options
+ * @param {String} [options.label] - what the undo menu should say
+ * @param {Boolean} [options.select=true] - select the root of what was added
+ * @returns {Object} a command
+ * @throws {TypeError} when the parent is unknown or the subtree is empty
+ */
+export function addSubtree(document, parentId, nodes, options = {}) {
+
+	const { select = true } = options;
+	const parent = document.nodes[parentId];
+
+	if (parent === undefined)
+		throw new TypeError(`No node "${parentId}" in the document`);
+
+	if (Array.isArray(nodes) === false || nodes.length === 0)
+		throw new TypeError('addSubtree needs at least one node');
+
+	const [root] = nodes;
+	const label = options.label ?? `Add ${root.type.toLowerCase()}`;
+
+	return {
+		label,
+		touches: [parentId],
+		apply: (state) => {
+
+			for (const node of nodes)
+				state.nodes[node.id] = node;
+
+			state.nodes[parentId].children.push(root.id);
+
+			if (select)
+				state.selection = { active: root.id, ids: [root.id] };
+		},
+	};
+}
+
+
+/**
  * Removes a node and everything under it.
  *
  * Also strips the removed ids out of every reference list that mentions them,
