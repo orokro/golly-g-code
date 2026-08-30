@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import { NodeType, FolderRole, createNode } from '@core/project/nodes.js';
 import { createProject } from '@core/project/document.js';
-import { folderOf } from '@core/project/tree.js';
+import { folderOf, childrenOf } from '@core/project/tree.js';
 import { packProject, unpackProject } from '@core/project/file.js';
 import { setField } from '@core/project/commands.js';
 
@@ -40,6 +40,11 @@ function fakeApi(answers = {}) {
 		openFileDialog: vi.fn(async () => answers.open ?? null),
 		saveFileDialog: vi.fn(async () => answers.saveTo ?? null),
 		messageBox: vi.fn(async (opts) => { asked.push(opts); return answers.button ?? 2; }),
+		readText: vi.fn(async (p) => {
+			if (disk.has(p) === false)
+				throw new Error(`ENOENT: no such file, open '${p}'`);
+			return new TextDecoder().decode(disk.get(p));
+		}),
 		readBinary: vi.fn(async (p) => {
 			if (disk.has(p) === false)
 				throw new Error(`ENOENT: no such file, open '${p}'`);
@@ -367,6 +372,119 @@ describe('what the title bar says', () => {
 		f.store.dispatch(setField(f.store.document, f.store.id, 'name', 'Sign'));
 
 		expect(f.file.name.value).toBe('Sign');
+	});
+});
+
+
+describe('importing drawings', () => {
+
+	/** A drawing with a square and a line. */
+	const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm"'
+		+ ' viewBox="0 0 100 100"><rect id="plate" x="0" y="0" width="10" height="10"/>'
+		+ '<path id="line" d="M20 0 L30 10"/></svg>';
+
+	/**
+	 * Puts a text file on the fake disk.
+	 *
+	 * @param {Object} f - a fixture
+	 * @param {String} at - where
+	 * @param {String} text - what
+	 */
+	const plantText = (f, at, text) => f.api.disk.set(at, new TextEncoder().encode(text));
+
+	it('turns a file into nodes, geometry and a kept original', () => {
+		const f = fixture();
+		plantText(f, '/art/parts.svg', SVG);
+
+		return f.file.importSvg(['/art/parts.svg']).then((result) => {
+
+			expect(result.imported).toBe(1);
+
+			const svgs = folderOf(f.store.document, FolderRole.SVGS);
+			const doc = childrenOf(f.store.document, svgs.id).at(-1);
+
+			expect(doc.name).toBe('parts.svg');
+			expect(childrenOf(f.store.document, doc.id).map((n) => n.name)).toEqual(['plate', 'line']);
+			expect(Object.keys(f.store.project.geometry)).toHaveLength(2);
+			expect(f.store.project.sources['parts.svg']).toBe(SVG);
+		});
+	});
+
+	it('is one undo entry per FILE, not per path and not per batch', () => {
+		// three drawings imported and wanting two of them back is a real thing
+		// the fixture already contains an "a.svg", so these are named to stay
+		// distinguishable from it -- the first version of this asserted on a list
+		// that had the fixture's document in it and read as a duplicate
+		const f = fixture();
+		plantText(f, '/art/one.svg', SVG);
+		plantText(f, '/art/two.svg', SVG);
+
+		return f.file.importSvg(['/art/one.svg', '/art/two.svg']).then(() => {
+
+			expect(f.store.undoLabel.value).toBe('Import two.svg');
+
+			f.store.undo();
+			const svgs = folderOf(f.store.document, FolderRole.SVGS);
+			expect(childrenOf(f.store.document, svgs.id).map((n) => n.name))
+				.toEqual(['a.svg', 'one.svg']);
+		});
+	});
+
+	it('keeps both originals when the same filename is imported twice', () => {
+		const f = fixture();
+		plantText(f, '/art/parts.svg', SVG);
+		plantText(f, '/other/parts.svg', SVG.replace('plate', 'plate2'));
+
+		return f.file.importSvg(['/art/parts.svg', '/other/parts.svg']).then(() => {
+			expect(Object.keys(f.store.project.sources).sort()).toEqual(['parts (2).svg', 'parts.svg']);
+		});
+	});
+
+	it('reports a file it could not read without abandoning the rest', () => {
+		const f = fixture();
+		plantText(f, '/art/good.svg', SVG);
+		plantText(f, '/art/bad.svg', 'not an svg at all');
+
+		return f.file.importSvg(['/art/bad.svg', '/art/good.svg']).then((result) => {
+			expect(result.imported).toBe(1);
+			expect(result.warnings.join(' ')).toMatch(/bad\.svg/);
+			expect(f.api.asked.at(-1)).toMatchObject({ type: 'info' });
+		});
+	});
+
+	it('says so when nothing at all could be imported', () => {
+		const f = fixture();
+		plantText(f, '/art/bad.svg', 'nope');
+
+		return f.file.importSvg(['/art/bad.svg']).then((result) => {
+			expect(result.imported).toBe(0);
+			expect(f.api.asked.at(-1)).toMatchObject({ type: 'error' });
+		});
+	});
+
+	it('does nothing when the dialog is cancelled', () => {
+		const f = fixture({ open: null });
+
+		return f.file.importSvg().then((result) => {
+			expect(result.imported).toBe(0);
+			expect(f.store.canUndo.value).toBe(false);
+		});
+	});
+
+	it('brings a reference image in as bytes, outside the document', () => {
+		const f = fixture();
+		f.api.disk.set('/art/photo.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+
+		return f.file.importReference(['/art/photo.png']).then((count) => {
+
+			expect(count).toBe(1);
+
+			const refs = folderOf(f.store.document, FolderRole.REFERENCES);
+			const image = childrenOf(f.store.document, refs.id)[0];
+
+			expect(image.name).toBe('photo.png');
+			expect([...f.store.project.assets[image.asset]]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+		});
 	});
 });
 

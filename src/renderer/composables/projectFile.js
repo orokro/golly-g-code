@@ -28,6 +28,10 @@ import { shallowRef, computed } from 'vue';
 
 import { createProject } from '@core/project/document.js';
 import { packProject, unpackProject, suggestedFilename, FILE_FILTER } from '@core/project/file.js';
+import { prepareSvgImport, uniqueName, summarise } from '@core/project/import.js';
+import { addSubtree } from '@core/project/commands.js';
+import { folderOf } from '@core/project/tree.js';
+import { NodeType, FolderRole, createNode } from '@core/project/nodes.js';
 
 import { createRecentFiles } from './recentFiles.js';
 
@@ -51,6 +55,18 @@ export const Answer = Object.freeze({
  * @throws {TypeError} when there is no store or no api
  */
 export function useProjectFile(options) {
+
+	/**
+	 * The last part of a path, on either kind of separator.
+	 *
+	 * Not `node:path`: this runs in the renderer, and the paths come from the
+	 * main process, which may be reporting a Windows path to a build running
+	 * anywhere. Splitting on both is simpler than caring which.
+	 *
+	 * @param {String} full - an absolute path
+	 * @returns {String} the filename
+	 */
+	const basename = (full) => full.split(/[/\\]/).pop() || full;
 
 	const { store, api, recent = createRecentFiles(), newId } = options ?? {};
 
@@ -249,6 +265,128 @@ export function useProjectFile(options) {
 	}
 
 	/**
+	 * Imports one or more SVG files into the project.
+	 *
+	 * Each file is its own undo entry, because importing three drawings and
+	 * wanting only two of them back is a real thing that happens, and one entry
+	 * for the batch would make that impossible.
+	 *
+	 * The geometry and the original text are written into the project BEFORE the
+	 * command is dispatched. Neither goes through the undo system — see
+	 * document.js — and an import that is then undone leaves both behind on
+	 * purpose, since that is exactly what its redo needs.
+	 *
+	 * @param {String[]} [paths] - files to import; asks with a dialog when absent
+	 * @returns {Promise<Object>} `{ imported, warnings }` — how many files, and
+	 *   anything the importer had to say about them
+	 */
+	async function importSvg(paths) {
+
+		const chosen = paths ?? await api.openFileDialog({
+			title: 'Import SVG',
+			filters: [{ name: 'SVG drawings', extensions: ['svg'] }],
+			properties: ['openFile', 'multiSelections'],
+		});
+
+		if (chosen == null || chosen.length === 0)
+			return { imported: 0, warnings: [] };
+
+		const folder = folderOf(store.document, FolderRole.SVGS);
+
+		/** @type {String[]} */
+		const warnings = [];
+		let imported = 0;
+
+		for (const each of chosen) {
+
+			try {
+
+				const text = await api.readText(each);
+				const prepared = prepareSvgImport(text, {
+					filename: basename(each),
+					existingSources: store.project.sources,
+				});
+
+				store.project.sources[prepared.source] = text;
+				Object.assign(store.project.geometry, prepared.geometry);
+
+				const counts = summarise(prepared);
+
+				store.dispatch(addSubtree(store.document, folder.id, prepared.nodes, {
+					label: `Import ${prepared.doc.name}`,
+				}));
+
+				imported += 1;
+				warnings.push(...prepared.warnings.map((w) => `${prepared.doc.name}: ${w}`));
+
+				if (counts.total === 0)
+					warnings.push(`${prepared.doc.name}: no shapes to cut.`);
+			}
+			catch (error) {
+				warnings.push(`${basename(each)}: ${error.message}`);
+			}
+		}
+
+		if (warnings.length > 0)
+			await api.messageBox({
+				type: imported === 0 ? 'error' : 'info',
+				buttons: ['OK'],
+				message: imported === 0 ? 'Nothing could be imported.' : 'Imported, with notes.',
+				detail: warnings.slice(0, 12).join('\n'),
+			});
+
+		return { imported, warnings };
+	}
+
+	/**
+	 * Imports a reference image.
+	 *
+	 * The bytes go into the project's asset store, which is outside the document
+	 * for the same reason geometry is: undo copies what a command touched, and a
+	 * photograph is not something to copy because its node was renamed.
+	 *
+	 * @param {String[]} [paths] - files to import; asks with a dialog when absent
+	 * @returns {Promise<Number>} how many were imported
+	 */
+	async function importReference(paths) {
+
+		const chosen = paths ?? await api.openFileDialog({
+			title: 'Import reference image',
+			filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+			properties: ['openFile', 'multiSelections'],
+		});
+
+		if (chosen == null || chosen.length === 0)
+			return 0;
+
+		const folder = folderOf(store.document, FolderRole.REFERENCES);
+		let imported = 0;
+
+		for (const each of chosen) {
+
+			try {
+
+				const bytes = new Uint8Array(await api.readBinary(each));
+				const name = basename(each);
+				const key = uniqueName(name, store.project.assets);
+
+				store.project.assets[key] = bytes;
+
+				store.dispatch(addSubtree(store.document, folder.id,
+					[createNode(NodeType.REFERENCE_IMAGE, { name, asset: key })],
+					{ label: `Import ${name}` }));
+
+				imported += 1;
+			}
+			catch (error) {
+				lastError.value = error.message;
+			}
+		}
+
+		return imported;
+	}
+
+	/**
 	 * Answers the main process's "may I close?".
 	 *
 	 * The same guard as everything else, which is why closing cannot be the one
@@ -270,6 +408,8 @@ export function useProjectFile(options) {
 		open,
 		save,
 		saveAs,
+		importSvg,
+		importReference,
 		requestClose,
 		forgetRecent: recent.forget,
 		clearRecent: recent.clear,
