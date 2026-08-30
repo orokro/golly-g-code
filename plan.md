@@ -843,8 +843,29 @@ halves may be clamped; "is the part held" is the wrong question when nothing is
 being freed), detail finer than the bit, a pass depth larger than the cut depth.
 
 ### 3.4 Project file I/O
-- [ ] `.gollyg` zip container: `project.json` + `assets/` (reference images) + `svg/` (originals verbatim, so they stay re-importable)
-- [ ] Schema version field + migration hook from day one
+
+- [x] `.gollyg` zip container: `project.json` + `geometry.json` + `svg/` (originals
+  verbatim, so they stay re-importable) + `assets/` (reference images). Pure
+  functions — bytes in, bytes out, no filesystem and no Electron — so the
+  interesting half can be tested headlessly instead of by clicking Open and hoping
+- [x] Schema version field + migration hook from day one. The table is empty
+  because version 1 is the only version there has been, but the walk is wired up
+  and tested through an injected table: **the migration you need is always for
+  files written before you thought about migrations**
+- [x] **A file from the future is REFUSED, not partially loaded.** Loading the
+  fields we recognise means silently dropping the rest and then saving that back
+  over the original — the one bug that destroys work rather than interrupting it
+- [x] **A loaded file is untrusted input**, same rule as restored window state and
+  more at stake. Refuses, with a sentence: bytes that are not a zip, a missing or
+  damaged `project.json`, a damaged `geometry.json` (blamed by name), a document
+  whose tree does not hold together, a node whose values are out of range. "It
+  opened but the outliner is empty" is a much worse afternoon than "this file was
+  saved by a newer version"
+- [x] **Zip-slip defence.** A `.gollyg` is a file people send each other, so an
+  entry named `../../.bashrc` is rejected where the name is read rather than
+  wherever it might later be used
+- [x] Side stores pruned on SAVE and only on save — after an undo would throw away
+  exactly what the matching redo wants back
 - [ ] New / Open / Save / Save As, wired to Electron `dialog` via `ipcMain.handle` (the template's fire-and-forget `send` channel can't return a path — this needs the `invoke`/`handle` pattern)
 - [ ] macOS `open-file` event + `CFBundleDocumentTypes` so double-clicking a `.gollyg` works *(deferred with D1, but the file association is cheap to declare now)*
 - [ ] Recent files

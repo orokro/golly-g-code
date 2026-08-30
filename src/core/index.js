@@ -57,10 +57,21 @@ export {
 
 export {
 	DOCUMENT_VERSION,
+	SIDE_STORES,
 	createProject,
-	referencedGeometry,
-	collectGeometry,
+	referenced,
+	pruneProject,
 } from './project/document.js';
+
+export {
+	EXTENSION,
+	FILE_FILTER,
+	MIGRATIONS,
+	migrate,
+	packProject,
+	unpackProject,
+	suggestedFilename,
+} from './project/file.js';
 
 export {
 	parentIndex,

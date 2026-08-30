@@ -39,7 +39,25 @@ export const DOCUMENT_VERSION = 1;
  * @property {Number} version - {@link DOCUMENT_VERSION} at the time of writing
  * @property {Object} document - `{ root, nodes, selection }`, the undoable part
  * @property {Object} geometry - path data by id, immutable, not undoable
+ * @property {Object} assets - reference images by id, as bytes
+ * @property {Object} sources - imported SVG files by name, kept verbatim so they
+ *   stay re-importable
  */
+
+
+/**
+ * The three side stores, and the node field that points into each.
+ *
+ * One table so that pruning, packing and unpacking cannot disagree about how
+ * many of these there are — adding a fourth is a line here, not a search.
+ *
+ * @type {Array<{bucket: String, field: String}>}
+ */
+export const SIDE_STORES = Object.freeze([
+	{ bucket: 'geometry', field: 'geometry' },
+	{ bucket: 'assets', field: 'asset' },
+	{ bucket: 'sources', field: 'source' },
+]);
 
 
 /**
@@ -82,54 +100,64 @@ export function createProject(options = {}) {
 			selection: { active: root.id, ids: [root.id] },
 		},
 		geometry: {},
+		assets: {},
+		sources: {},
 	};
 }
 
 
 /**
- * Which geometry ids are still referred to by something.
+ * Which keys of one side store are still referred to by a node.
  *
  * @param {Object} document - the project document
- * @returns {Set<String>} the live ids
+ * @param {String} field - the node field that points into it
+ * @returns {Set<String>} the live keys
  */
-export function referencedGeometry(document) {
+export function referenced(document, field) {
 
 	/** @type {Set<String>} */
 	const live = new Set();
 
 	for (const node of Object.values(document.nodes))
-		if (typeof node.geometry === 'string' && node.geometry !== '')
-			live.add(node.geometry);
+		if (typeof node[field] === 'string' && node[field] !== '')
+			live.add(node[field]);
 
 	return live;
 }
 
 
 /**
- * Drops geometry nothing points at any more.
+ * Drops everything in the side stores that nothing points at any more.
  *
- * For save, and only for save. Doing this after an undo would throw away exactly
+ * For SAVE, and only for save. Doing it after an undo would throw away exactly
  * what the matching redo needs, and doing it on a timer would make undo depend
- * on how long you paused.
+ * on how long you happened to pause.
  *
  * @param {Project} project - the project
- * @returns {Object} `{ geometry, dropped }` — the kept entries and the ids removed
+ * @returns {Object} `{ geometry, assets, sources, dropped }` — the kept entries
+ *   and, per bucket, the keys removed
  */
-export function collectGeometry(project) {
+export function pruneProject(project) {
 
-	const live = referencedGeometry(project.document);
+	/** @type {Object} */
+	const kept = {};
 
-	/** @type {Object<String, *>} */
-	const geometry = {};
+	/** @type {Object<String, String[]>} */
+	const dropped = {};
 
-	/** @type {String[]} */
-	const dropped = [];
+	for (const { bucket, field } of SIDE_STORES) {
 
-	for (const [id, data] of Object.entries(project.geometry))
-		if (live.has(id))
-			geometry[id] = data;
-		else
-			dropped.push(id);
+		const live = referenced(project.document, field);
 
-	return { geometry, dropped };
+		kept[bucket] = {};
+		dropped[bucket] = [];
+
+		for (const [key, value] of Object.entries(project[bucket] ?? {}))
+			if (live.has(key))
+				kept[bucket][key] = value;
+			else
+				dropped[bucket].push(key);
+	}
+
+	return { ...kept, dropped };
 }

@@ -4,7 +4,7 @@ import {
 	NodeType, FolderRole, Kind, Quantity, FIELDS, JobOperation,
 	ALLOWED_CHILDREN, createNode, fieldsOf, fieldSpec,
 } from './nodes.js';
-import { createProject, DOCUMENT_VERSION, referencedGeometry, collectGeometry } from './document.js';
+import { createProject, DOCUMENT_VERSION, referenced, pruneProject } from './document.js';
 import {
 	parentOf, childrenOf, ancestorsOf, ancestorOfType,
 	isVisible, isLocked, folderOf, cuttingOrder, validateTree,
@@ -438,13 +438,20 @@ describe('geometry, which lives outside the document', () => {
 		expect(project.geometry).toEqual({});
 	});
 
-	it('knows which entries are still pointed at', () => {
+	it('knows which entries are still pointed at, in all three side stores', () => {
 		const { project, document, n } = fixture();
 
 		document.nodes[n.open.id].geometry = 'g1';
+		document.nodes[n.doc.id].source = 'skyline.svg';
 		project.geometry = { g1: [[0, 0]], g2: [[1, 1]] };
+		project.sources = { 'skyline.svg': '<svg/>', 'old.svg': '<svg/>' };
 
-		expect([...referencedGeometry(document)]).toEqual(['g1']);
-		expect(collectGeometry(project)).toEqual({ geometry: { g1: [[0, 0]] }, dropped: ['g2'] });
+		expect([...referenced(document, 'geometry')]).toEqual(['g1']);
+		expect(pruneProject(project)).toEqual({
+			geometry: { g1: [[0, 0]] },
+			assets: {},
+			sources: { 'skyline.svg': '<svg/>' },
+			dropped: { geometry: ['g2'], assets: [], sources: ['old.svg'] },
+		});
 	});
 });
