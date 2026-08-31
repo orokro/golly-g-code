@@ -30,6 +30,73 @@ import { validateValue } from './schema.js';
 import { parentIndex, parentOf, descendantsOf } from './tree.js';
 
 /**
+ * Sets several fields across several nodes, as ONE change.
+ *
+ * ---------------------------------------------------------------------------
+ * Why this exists, and what it fixes
+ *
+ * `setField` coalesces on the node and field together, which is exactly right
+ * for a slider and exactly wrong for a gizmo. A rotate drag has to write both
+ * `rotation` and `offset` on every move — a shape turning about a pivot that is
+ * not its own centre swings as well as turns — so the dispatches alternate
+ * offset, rotation, offset, rotation, and so does the coalesce key. Nothing ever
+ * matched the entry before it, and a twelve-move drag became twenty-four undo
+ * entries. Three undos put a shape somewhere it had never been.
+ *
+ * The real shape of the action was never "set a field". It was "place these
+ * shapes here", which is one thing the user did and should be one thing to undo.
+ * ---------------------------------------------------------------------------
+ *
+ * @param {Object} document - the project document
+ * @param {Array<Object>} changes - `{ id, fields }` per node
+ * @param {Object} [options] - options
+ * @param {String} [options.label='Move'] - what the undo entry is called
+ * @param {String} [options.coalesceKey] - stable for one gesture; omit for none
+ * @returns {Object} a command
+ * @throws {TypeError} for an unknown node or field
+ * @throws {RangeError} when a value is not one the field accepts
+ */
+export function setFields(document, changes, options = {}) {
+
+	const { label = 'Move', coalesceKey } = options;
+
+	for (const { id, fields } of changes) {
+
+		const node = document.nodes[id];
+
+		if (node === undefined)
+			throw new TypeError(`No node "${id}" in the document`);
+
+		for (const [field, value] of Object.entries(fields)) {
+
+			const spec = fieldSpec(node.type, field);
+
+			if (spec === null)
+				throw new TypeError(`${node.type} has no field "${field}"`);
+
+			// checked here rather than at commit, so a bad value never enters the
+			// undo stack and cannot be reached by undoing back through it
+			const issues = validateValue(node.type, field, value);
+
+			if (issues.length > 0)
+				throw new RangeError(`${spec.label}: ${issues.join('; ')}`);
+		}
+	}
+
+	return {
+		label,
+		touches: changes.map((change) => change.id),
+		coalesceKey,
+		apply: (state) => {
+			for (const { id, fields } of changes)
+				for (const [field, value] of Object.entries(fields))
+					state.nodes[id][field] = value;
+		},
+	};
+}
+
+
+/**
  * Sets one field on one node.
  *
  * Coalescing is keyed to the node and field, so dragging a slider or typing into

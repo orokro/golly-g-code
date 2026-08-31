@@ -86,12 +86,13 @@
 
 				<!-- the drawing itself, a hairline at any zoom -->
 				<path v-for="shape in shapes" :key="shape.id" class="shape" :d="shape.d"
-					:class="{ selected: selectedIds.includes(shape.id) }"
+					:class="{ selected: selectedIds.includes(shape.id) }" :transform="shape.transform"
 					fill="none" stroke-width="1" vector-effect="non-scaling-stroke"/>
 
 				<!-- a fat transparent stroke, so a hairline is still clickable -->
 				<path v-for="shape in shapes" :key="`h${shape.id}`" class="hit" :d="shape.d"
-					:class="{ locked: shape.locked }" fill="none" stroke="transparent"
+					:class="{ locked: shape.locked }" :transform="shape.transform"
+					fill="none" stroke="transparent"
 					stroke-width="8" vector-effect="non-scaling-stroke"
 					@pointerdown.stop="onPickShape($event, shape)"/>
 
@@ -116,6 +117,43 @@
 						:cx="handle.point[0]" :cy="handle.point[1]" :r="6 / view.scale"
 						vector-effect="non-scaling-stroke"
 						@pointerdown.stop="onDragTab($event, handle)"/>
+				</g>
+
+				<!--
+					The gizmo. One box round the whole selection, so "move these four
+					holes 5mm left" is one action rather than four.
+
+					Everything in here is sized by 1/scale: a handle is a UI affordance
+					and must stay the same size on screen, which is the exact opposite
+					of what the kerf does.
+				-->
+				<g v-if="gizmo !== null" class="gizmo">
+
+					<rect class="frame" :x="gizmo.box.minX" :y="gizmo.box.minY"
+						:width="gizmo.box.maxX - gizmo.box.minX"
+						:height="gizmo.box.maxY - gizmo.box.minY"
+						fill="none" vector-effect="non-scaling-stroke"/>
+
+					<line class="stem" :x1="gizmo.centre[0]" :y1="gizmo.box.maxY"
+						:x2="gizmo.knob[0]" :y2="gizmo.knob[1]"
+						vector-effect="non-scaling-stroke"/>
+
+					<circle class="knob" :cx="gizmo.knob[0]" :cy="gizmo.knob[1]" :r="7 / view.scale"
+						vector-effect="non-scaling-stroke"
+						@pointerdown.stop="onGizmo($event, Mode.ROTATE, null)"/>
+
+					<rect v-for="handle in gizmo.handles" :key="handle.name" class="grip"
+						:x="handle.point[0] - (5 / view.scale)" :y="handle.point[1] - (5 / view.scale)"
+						:width="10 / view.scale" :height="10 / view.scale"
+						vector-effect="non-scaling-stroke"
+						@pointerdown.stop="onGizmo($event, Mode.SCALE, handle.corner)"/>
+
+					<rect class="mover" :x="gizmo.box.minX" :y="gizmo.box.minY"
+						:width="gizmo.box.maxX - gizmo.box.minX"
+						:height="gizmo.box.maxY - gizmo.box.minY"
+						fill="transparent" stroke="none"
+						@pointerdown.stop="onGizmo($event, Mode.TRANSLATE, null)"/>
+
 				</g>
 
 				<!-- work zero: everything emitted is measured from here -->
@@ -147,8 +185,11 @@
 import { ref, shallowRef, computed, inject, watch } from 'vue';
 
 import { NodeType } from '@core/project/nodes.js';
-import { setField } from '@core/project/commands.js';
-import { isVisible, isLocked } from '@core/project/tree.js';
+import { setField, setFields } from '@core/project/commands.js';
+import {
+	matrixFor, svgTransform, transformBounds, centreOf, PLACEABLE,
+} from '@core/project/placement.js';
+import { isVisible, isLocked, ancestorsOf } from '@core/project/tree.js';
 import { resolvedValues } from '@core/project/inherit.js';
 
 import { useResize } from '../composables/useResize.js';
@@ -157,6 +198,9 @@ import { pathData, polylineData, boundsOf, unionBounds, padBounds } from './work
 import {
 	tabBands, travelSegments, travelDistance, tabHandles, positionFromPoint,
 } from './workspace/layers.js';
+import {
+	Mode, CORNERS, KNOB_GAP, pointOn, centreOfBox, translation, rotation, scaling, applyDrag,
+} from './workspace/gizmo.js';
 import {
 	createView, viewTransform, toWorld, panBy, zoomAt, fitBounds, gridSpacing,
 } from './workspace/view.js';
@@ -249,10 +293,17 @@ const shapes = computed(() => {
 		if (geometry === undefined)
 			continue;
 
+		// The `d` is the geometry EXACTLY as imported and is built once; where the
+		// shape sits is an attribute on the element. That is what makes dragging
+		// cheap — a transform is one string, a `d` is fifty thousand numbers — and
+		// it is also where the truth lives, per placement.js.
+		const matrix = matrixFor(store.project, node.id);
+
 		found.push({
 			id: node.id,
 			d: pathData(geometry.subPaths),
-			bounds: boundsOf(geometry.subPaths),
+			transform: svgTransform(matrix),
+			bounds: transformBounds(boundsOf(geometry.subPaths), matrix),
 			locked: isLocked(store.document, node.id),
 		});
 	}
@@ -321,6 +372,64 @@ const tabs = computed(() => {
 	return tabBands(toolpaths.value, widthOf, drawn)
 		.map((band) => ({ ...band, d: polylineData({ points: band.points }) }));
 });
+
+/**
+ * The nodes the gizmo acts on: everything selected that can actually be placed.
+ *
+ * A job or a tool in the selection is simply not a thing with a position, so it
+ * is dropped rather than refused — selecting a job and a path and dragging
+ * should move the path.
+ */
+const placeable = computed(() => {
+	store.revision.value;
+	return selectedIds.value
+		.map((id) => store.document.nodes[id])
+		.filter((node) => node !== undefined && PLACEABLE.includes(node.type))
+		.filter((node) => isLocked(store.document, node.id) === false);
+});
+
+/**
+ * The gizmo: one box round the whole selection, with its handles.
+ *
+ * Null when there is nothing placeable selected, which is also what hides it.
+ */
+const gizmo = computed(() => {
+
+	const ids = placeable.value.map((node) => node.id);
+
+	if (ids.length === 0)
+		return null;
+
+	const box = unionBounds(shapes.value
+		.filter((shape) => ids.includes(shape.id) || ids.some((id) => within(id, shape.id)))
+		.map((shape) => shape.bounds)
+		.filter((found) => found !== null));
+
+	if (box === null)
+		return null;
+
+	const centre = centreOfBox(box);
+
+	return {
+		box,
+		centre,
+		knob: [centre[0], box.maxY + (KNOB_GAP / view.value.scale)],
+		handles: CORNERS.map((corner) => ({
+			name: corner.name, corner, point: pointOn(box, corner.fx, corner.fy),
+		})),
+	};
+});
+
+/**
+ * Whether a shape is inside a placeable node — a path inside a selected drawing.
+ *
+ * @param {String} id - the possible ancestor
+ * @param {String} shapeId - the shape
+ * @returns {Boolean} true when the shape is part of it
+ */
+function within(id, shapeId) {
+	return ancestorsOf(store.document, shapeId).some((node) => node.id === id);
+}
 
 /** One draggable handle per tab. */
 const tabHandleList = computed(() => (showTabs.value ? tabHandles(toolpaths.value, drawn) : []));
@@ -432,6 +541,125 @@ function onPickShape(event, shape) {
 			: [...selectedIds.value, shape.id]);
 	else
 		store.select([shape.id]);
+}
+
+/**
+ * Drags the gizmo: moves, turns or scales everything selected.
+ *
+ * The shapes' placements are captured ONCE, when the drag starts, and every move
+ * is computed from that snapshot rather than from the previous move. Twenty
+ * moves of a degree each have to land on twenty degrees, not on twenty
+ * accumulated roundings of a degree — and the same rule is what lets a drag be
+ * one coalesced undo entry instead of twenty.
+ *
+ * Modifiers, as everywhere else: shift locks a translate to an axis and snaps a
+ * rotate to fifteen degrees; a corner scales uniformly unless alt is held; alt
+ * on a scale pivots about the centre instead of the opposite corner.
+ *
+ * @param {PointerEvent} event - the pointer that started it
+ * @param {String} mode - one of {@link Mode}
+ * @param {Object|null} corner - the scale handle, for a scale drag
+ */
+function onGizmo(event, mode, corner) {
+
+	if (event.button !== 0 || gizmo.value === null)
+		return;
+
+	const box = gizmo.value.box;
+	const pivotCentre = gizmo.value.centre;
+	const at = local(event);
+	const world = toWorld(view.value, at.x, at.y);
+	const from = [world.x, world.y];
+
+	// captured at the start, so every move is measured from the same origin
+	const start = placeable.value.map((node) => ({
+		id: node.id,
+		values: resolvedValues(store.document, node.id),
+		centre: centreOf(store.project, node.id),
+	}));
+
+	if (start.length === 0)
+		return;
+
+	let moved = false;
+
+	// Stable for the whole gesture, so every move collapses into one undo entry.
+	// `seal()` on pointer-up closes it, so the NEXT drag starts its own.
+	const key = `gizmo:${mode}:${start.map((shape) => shape.id).join(',')}`;
+	const label = { [Mode.TRANSLATE]: 'Move', [Mode.ROTATE]: 'Rotate', [Mode.SCALE]: 'Scale' }[mode];
+
+	/**
+	 * Applies the drag to every selected shape.
+	 *
+	 * @param {PointerEvent} move - the move
+	 */
+	const onMove = (move) => {
+
+		const now = local(move);
+		const there = toWorld(view.value, now.x, now.y);
+		const to = [there.x, there.y];
+
+		if (moved === false && Math.hypot(to[0] - from[0], to[1] - from[1]) * view.value.scale < 3)
+			return;
+
+		moved = true;
+
+		const change = describe(mode, corner, box, pivotCentre, from, to, move);
+
+		// ONE command for the whole selection and all its fields. Dispatching a
+		// setField each would alternate coalesce keys between `offset` and
+		// `rotation` and never merge, turning a twelve-move drag into twenty-four
+		// undo entries — see setFields.
+		store.dispatch(setFields(store.document,
+			start.map((shape) => ({
+				id: shape.id, fields: applyDrag(shape.values, shape.centre, change),
+			})),
+			{ label, coalesceKey: key }));
+	};
+
+	/** Finishes, closing the coalesced entry so the next drag is its own. */
+	const onUp = () => {
+		window.removeEventListener('pointermove', onMove);
+		window.removeEventListener('pointerup', onUp);
+		store.seal();
+	};
+
+	window.addEventListener('pointermove', onMove);
+	window.addEventListener('pointerup', onUp);
+}
+
+/**
+ * What a drag is asking for, in the form `applyDrag` wants.
+ *
+ * @param {String} mode - one of {@link Mode}
+ * @param {Object|null} corner - the scale handle
+ * @param {Object} box - the selection bounds at drag start
+ * @param {Number[]} centre - the selection's centre
+ * @param {Number[]} from - where the drag started, in millimetres
+ * @param {Number[]} to - where the pointer is now
+ * @param {PointerEvent} event - for the modifier keys
+ * @returns {Object} the change
+ */
+function describe(mode, corner, box, centre, from, to, event) {
+
+	if (mode === Mode.TRANSLATE)
+		return { mode, ...translation(from, to, { axisLock: event.shiftKey }) };
+
+	if (mode === Mode.ROTATE)
+		return {
+			mode, pivot: centre,
+			radians: rotation(centre, from, to,
+				{ snapRadians: event.shiftKey ? Math.PI / 12 : 0 }),
+		};
+
+	// A corner keeps the aspect ratio by default — stretching a part you drew to
+	// size is much more often a slip than an intention — and alt lets it go.
+	const found = scaling(box, corner, to, {
+		uniform: !event.altKey,
+		fromCentre: event.metaKey || event.ctrlKey,
+	});
+
+	return { mode, sx: found.sx, sy: found.sy, pivot: found.pivot };
 }
 
 /**
@@ -587,6 +815,46 @@ defineExpose({ view, zoomToFit, toWorld: (x, y) => toWorld(view.value, x, y) });
 
 	.tab {
 		pointer-events: none;
+	}
+
+	.gizmo .frame {
+		stroke: var(--gg-accent);
+		stroke-width: 1;
+		stroke-dasharray: 5 4;
+		opacity: 0.8;
+		pointer-events: none;
+	}
+
+	.gizmo .stem {
+		stroke: var(--gg-accent);
+		stroke-width: 1;
+		opacity: 0.8;
+		pointer-events: none;
+	}
+
+	.gizmo .knob,
+	.gizmo .grip {
+		fill: var(--gg-surface);
+		stroke: var(--gg-accent);
+		stroke-width: 1.5;
+	}
+
+	.gizmo .knob {
+		cursor: grab;
+	}
+
+	.gizmo .grip {
+		cursor: nwse-resize;
+	}
+
+	.gizmo .knob:hover,
+	.gizmo .grip:hover {
+		fill: var(--gg-accent);
+	}
+
+	/* the inside of the frame, so the shape can be dragged from anywhere in it */
+	.gizmo .mover {
+		cursor: move;
 	}
 
 	.handle {

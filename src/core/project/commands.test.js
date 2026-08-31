@@ -7,7 +7,8 @@ import { resolveField, Source } from './inherit.js';
 import { createHistory } from './history.js';
 import { nodeDriver, cloneState, diffStates } from './snapshot.js';
 import {
-	setField, clearOverride, addNode, removeNode, moveNode, reorderChildren, setReferences,
+	setField, setFields, clearOverride, addNode, removeNode, moveNode, reorderChildren,
+	setReferences,
 } from './commands.js';
 
 /** Deterministic ids. */
@@ -390,5 +391,119 @@ describe('a session of random project edits', () => {
 
 			expect(diffStates(ending, document), `seed ${seed}, redone`).toEqual([]);
 		}
+	});
+});
+
+
+describe('setting several fields at once', () => {
+
+	it('writes every field on every node it was given', () => {
+
+		const f = fixture();
+
+		f.h.dispatch(f.document, setFields(f.document, [
+			{ id: f.n.open.id, fields: { offset: { x: 5, y: 6 }, rotation: 1 } },
+			{ id: f.n.closed.id, fields: { offset: { x: 7, y: 8 } } },
+		]));
+
+		expect(f.document.nodes[f.n.open.id].offset).toEqual({ x: 5, y: 6 });
+		expect(f.document.nodes[f.n.open.id].rotation).toBe(1);
+		expect(f.document.nodes[f.n.closed.id].offset).toEqual({ x: 7, y: 8 });
+	});
+
+	it('is ONE undo entry for a whole gesture, where a setField each is not', () => {
+
+		// The bug this function exists for, pinned by doing it both ways.
+		//
+		// A rotate drag writes both `rotation` and `offset` on every move — a
+		// shape turning about a pivot that is not its own centre swings as well as
+		// turns. As two setFields the coalesce keys ALTERNATE, so nothing ever
+		// matches the entry before it and a twelve-move drag leaves twenty-four
+		// entries. Three undos then put the shape somewhere it had never been.
+
+		const perField = fixture();
+
+		for (let step = 1; step <= 12; step++) {
+			perField.h.dispatch(perField.document,
+				setField(perField.document, perField.n.open.id, 'rotation', step * 0.1));
+			perField.h.dispatch(perField.document,
+				setField(perField.document, perField.n.open.id, 'offset', { x: step, y: 0 }));
+		}
+
+		perField.h.undo(perField.document);
+
+		// one undo walked back one of many entries, not the gesture
+		expect(perField.h.canUndo()).toBe(true);
+		expect(perField.document.nodes[perField.n.open.id].rotation).toBeCloseTo(1.2, 9);
+
+		// the same drag as one command per move
+		const f = fixture();
+
+		for (let step = 1; step <= 12; step++)
+			f.h.dispatch(f.document, setFields(f.document, [
+				{ id: f.n.open.id, fields: { rotation: step * 0.1, offset: { x: step, y: 0 } } },
+			], { coalesceKey: 'gizmo:rotate:test', label: 'Rotate' }));
+
+		expect(f.document.nodes[f.n.open.id].rotation).toBeCloseTo(1.2, 9);
+
+		f.h.undo(f.document);
+
+		expect(f.document.nodes[f.n.open.id].rotation).toBe(0);
+		expect(f.document.nodes[f.n.open.id].offset).toEqual({ x: 0, y: 0 });
+		expect(f.h.canUndo()).toBe(false);
+	});
+
+	it('does NOT coalesce with the next gesture once it is sealed', () => {
+
+		const f = fixture();
+
+		f.h.dispatch(f.document, setFields(f.document,
+			[{ id: f.n.open.id, fields: { rotation: 0.5 } }], { coalesceKey: 'a' }));
+		f.h.seal();
+		f.h.dispatch(f.document, setFields(f.document,
+			[{ id: f.n.open.id, fields: { rotation: 1 } }], { coalesceKey: 'a' }));
+
+		f.h.undo(f.document);
+		expect(f.document.nodes[f.n.open.id].rotation).toBe(0.5);
+	});
+
+	it('keeps two different gestures apart', () => {
+
+		const f = fixture();
+
+		f.h.dispatch(f.document, setFields(f.document,
+			[{ id: f.n.open.id, fields: { rotation: 0.5 } }], { coalesceKey: 'rotate' }));
+		f.h.dispatch(f.document, setFields(f.document,
+			[{ id: f.n.open.id, fields: { offset: { x: 9, y: 0 } } }], { coalesceKey: 'move' }));
+
+		f.h.undo(f.document);
+		expect(f.document.nodes[f.n.open.id].offset).toEqual({ x: 0, y: 0 });
+		expect(f.document.nodes[f.n.open.id].rotation).toBe(0.5);
+	});
+
+	it('refuses a value the field will not take, before it reaches the stack', () => {
+		const f = fixture();
+		expect(() => setFields(f.document, [{ id: f.n.open.id, fields: { scale: 'big' } }]))
+			.toThrow(RangeError);
+		expect(() => setFields(f.document, [{ id: f.n.open.id, fields: { nope: 1 } }]))
+			.toThrow(TypeError);
+		expect(() => setFields(f.document, [{ id: 'ghost', fields: { rotation: 1 } }]))
+			.toThrow(TypeError);
+	});
+
+	it('declares every node it touches, so undo restores all of them', () => {
+
+		// `verify: true` in the fixture makes this an assertion rather than a
+		// hope: a command that changes a node it did not declare throws.
+		const f = fixture();
+
+		f.h.dispatch(f.document, setFields(f.document, [
+			{ id: f.n.open.id, fields: { offset: { x: 1, y: 1 } } },
+			{ id: f.n.closed.id, fields: { offset: { x: 2, y: 2 } } },
+		]));
+		f.h.undo(f.document);
+
+		expect(f.document.nodes[f.n.open.id].offset).toEqual({ x: 0, y: 0 });
+		expect(f.document.nodes[f.n.closed.id].offset).toEqual({ x: 0, y: 0 });
 	});
 });

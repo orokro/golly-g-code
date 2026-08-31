@@ -84,11 +84,13 @@ export const GROUPS = Object.freeze({
 
 	[NodeType.SVG_DOC]: [
 		{ name: 'Source', fields: ['source', 'pixelsPerInch', 'dpiDependent', 'widthMm', 'heightMm'] },
+		{ name: 'Placement', fields: ['offset', 'rotation', 'scale'] },
 		{ name: 'Import notes', fields: ['notes'] },
 		{ name: 'General', fields: ['name', 'locked', 'visible'] },
 	],
 
 	[NodeType.SVG_PATH]: [
+		{ name: 'Placement', fields: ['offset', 'rotation', 'scale'] },
 		{ name: 'Path', fields: ['closed', 'geometry'] },
 		{ name: 'General', fields: ['name', 'locked', 'visible'] },
 	],

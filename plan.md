@@ -1021,7 +1021,38 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
   of them
 - [ ] **Selection cycling**: `document.elementsFromPoint()` returns the hit stack in z-order; advance an index when the click is within ~3px of the previous one, wrap at the end. Blender behaviour, essentially free
 - [ ] Selected state: thicker stroke + dashed bounding box
-- [ ] Gizmos: translate, rotate, scale (uniform + per-axis), all emitting coalesced commands
+- [x] Gizmos: translate, rotate, scale (uniform + per-axis), all emitting
+  coalesced commands. One box round the whole SELECTION, so "move these four
+  holes 5mm left" is one action rather than four
+- [x] **Placement is a transform on the NODE, not rewritten path data.** plan.md
+  said to commit path data on release, and it is right about the performance —
+  re-serialising a large `d` every mousemove is the way to make SVG feel slow —
+  but wrong about where the truth belongs, and the reason is
+  `prepareSvgReimport`. Changing a drawing's resolution re-reads the original and
+  KEEPS the path node ids, so rewritten geometry would silently lose every
+  placement, with no error and no undo entry to point at. Undo is free as a
+  bonus: geometry lives in a side store the history does not snapshot; three
+  fields on a node are snapshotted like any other
+- [x] `scale`, then `rotate`, then `translate`, all about the shape's own
+  UNTRANSFORMED bounds centre — computed, never stored, because geometry never
+  changes. Rotating about the drawing origin sends a shape across the bed
+- [x] Rotating a GROUP moves each shape's offset as well as its rotation: a
+  shape's own rotation turns it in place, and swinging it round a pivot that is
+  not its centre is the offset's job. Do only one and four holes spin on the spot
+  and stay in a square
+- [x] Verified in a browser end to end: translate 28.49mm and the CUT moves
+  28.49mm; a corner drag scales uniformly and the emitted path stays exactly
+  3.175mm wider than the scaled shape, because the kerf is the cutter and the
+  cutter is the size it is; three undos put everything back exactly
+- [x] **`setFields`**, because a gizmo is one action. `setField` coalesces on
+  node-and-field, which is right for a slider and wrong for a rotate: writing
+  `rotation` and `offset` alternately alternates the coalesce key, nothing ever
+  matches the entry before it, and a twelve-move drag left twenty-four undo
+  entries. Three undos put a shape somewhere it had never been
+- [x] Found by looking: the same edit landed in the PAN handler too — both
+  functions had a `let moved = false` — so every pan threw a ReferenceError that
+  Vue swallowed. And a handle sized in user units is five MILLIMETRES; every part
+  of the gizmo divides by the scale, the exact opposite of the kerf
 - [x] **Travel-move layer** — the lifts and rapids between cuts, so the effect of
   ordering is visible rather than argued about. Greg's request. Derived from the
   emitted program rather than re-derived in the renderer: two copies of an

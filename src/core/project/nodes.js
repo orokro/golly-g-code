@@ -529,6 +529,28 @@ export const FIELDS = Object.freeze({
 			desc: 'Anything the importer had to say about this file.',
 			kind: Kind.TEXT, quantity: Quantity.NONE, default: '',
 		},
+
+		// ---- where it sits ----
+		// A transform on the NODE, not rewritten path data. Changing an SvgDoc's
+		// resolution re-reads the kept original and keeps these ids, so geometry
+		// that had been dragged would lose every placement with no error and no
+		// undo entry to point at. See placement.js.
+
+		offset: {
+			label: 'Position', desc: 'How far it has been moved from where the file put it.',
+			kind: Kind.VECTOR2, quantity: Quantity.LENGTH, default: { x: 0, y: 0 },
+		},
+
+		rotation: {
+			label: 'Rotation', desc: 'How far round it is turned, about its own centre.',
+			kind: Kind.NUMBER, quantity: Quantity.ANGLE,
+			default: 0, min: -Math.PI * 2, max: Math.PI * 2, step: Math.PI / 180,
+		},
+
+		scale: {
+			label: 'Scale', desc: 'How much bigger or smaller than the file drew it. 1 is as drawn.',
+			kind: Kind.VECTOR2, quantity: Quantity.NONE, default: { x: 1, y: 1 },
+		},
 	}),
 
 	// --------------------------------------------------------------- SvgPath
@@ -544,6 +566,28 @@ export const FIELDS = Object.freeze({
 		closed: {
 			label: 'Closed', desc: 'Whether the path returns to where it started. Decides which operations mean anything.',
 			kind: Kind.BOOLEAN, quantity: Quantity.NONE, default: false,
+		},
+
+		// ---- where it sits ----
+		// A transform on the NODE, not rewritten path data. Changing an SvgDoc's
+		// resolution re-reads the kept original and keeps these ids, so geometry
+		// that had been dragged would lose every placement with no error and no
+		// undo entry to point at. See placement.js.
+
+		offset: {
+			label: 'Position', desc: 'How far it has been moved from where the file put it.',
+			kind: Kind.VECTOR2, quantity: Quantity.LENGTH, default: { x: 0, y: 0 },
+		},
+
+		rotation: {
+			label: 'Rotation', desc: 'How far round it is turned, about its own centre.',
+			kind: Kind.NUMBER, quantity: Quantity.ANGLE,
+			default: 0, min: -Math.PI * 2, max: Math.PI * 2, step: Math.PI / 180,
+		},
+
+		scale: {
+			label: 'Scale', desc: 'How much bigger or smaller than the file drew it. 1 is as drawn.',
+			kind: Kind.VECTOR2, quantity: Quantity.NONE, default: { x: 1, y: 1 },
 		},
 	}),
 

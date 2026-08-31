@@ -33,6 +33,7 @@ import { arcLengths, pointAt, projectOnto, placeTabs } from '../cam/tabs.js';
 import { NodeType, Combine } from './nodes.js';
 import { ancestorOfType, childrenOf, cuttingOrder } from './tree.js';
 import { resolvedValues } from './inherit.js';
+import { matrixFor, apply, isIdentity } from './placement.js';
 
 /** The operations that need a closed contour. */
 const CLOSED_OPERATIONS = Object.freeze([Operation.INSIDE, Operation.OUTSIDE, Operation.POCKET]);
@@ -176,9 +177,17 @@ function gather(project, pathIds, tolerance, warnings) {
 			continue;
 		}
 
+		// Where the shape SITS is a property of the node, not of the stored path
+		// data (see placement.js). This is the only place in the core that reads
+		// geometry for cutting, which is what keeps that from being a trap.
+		const matrix = matrixFor(project, id);
+		const place = isIdentity(matrix)
+			? (points) => points
+			: (points) => points.map((point) => apply(matrix, point));
+
 		for (const sub of flattenSubPaths(geometry.subPaths, { tolerance }))
 			if (sub.points.length > 1)
-				runs.push({ id, closed: sub.closed === true, points: sub.points });
+				runs.push({ id, closed: sub.closed === true, points: place(sub.points) });
 	}
 
 	return runs;
