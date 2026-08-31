@@ -83,7 +83,8 @@ export const GROUPS = Object.freeze({
 	],
 
 	[NodeType.SVG_DOC]: [
-		{ name: 'Source', fields: ['source'] },
+		{ name: 'Source', fields: ['source', 'pixelsPerInch', 'dpiDependent', 'widthMm', 'heightMm'] },
+		{ name: 'Import notes', fields: ['notes'] },
 		{ name: 'General', fields: ['name', 'locked', 'visible'] },
 	],
 
@@ -124,7 +125,14 @@ export const TYPE_LABEL = Object.freeze({
 });
 
 /** Fields nobody may type into, whatever their kind. */
-const READ_ONLY = Object.freeze(['geometry', 'asset', 'role', 'closed']);
+const READ_ONLY = Object.freeze([
+	'geometry', 'asset', 'role', 'closed',
+
+	// facts about what the import produced, not settings. `widthMm` is the one
+	// worth reading: measure the real thing against it, and if they disagree the
+	// resolution above it is wrong
+	'dpiDependent', 'widthMm', 'heightMm', 'notes',
+]);
 
 
 /**
@@ -314,6 +322,12 @@ function same(a, b) {
  * @returns {Boolean} false when the field has no effect right now
  */
 export function isRelevant(node, field, values) {
+
+	// a stated size in mm or inches leaves nothing to assume, so the resolution
+	// is drawn but inert -- dimmed rather than hidden, so it is still findable
+	// when a later import of the same drawing does need it
+	if (node?.type === NodeType.SVG_DOC && field === 'pixelsPerInch')
+		return values.dpiDependent === true;
 
 	if (node?.type !== NodeType.JOB)
 		return true;

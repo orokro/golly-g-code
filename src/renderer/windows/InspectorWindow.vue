@@ -58,8 +58,9 @@ import { computed, inject } from 'vue';
 
 import { NodeType, createNode } from '@core/project/nodes.js';
 import { resolvedValues } from '@core/project/inherit.js';
-import { parentOf, ancestorOfType, childrenOf, folderOf } from '@core/project/tree.js';
+import { childrenOf, folderOf } from '@core/project/tree.js';
 import { setField, clearOverride, addNode, addSubtree, setReferences } from '@core/project/commands.js';
+import { prepareSvgReimport } from '@core/project/import.js';
 import { arcLengths } from '@core/cam/tabs.js';
 
 import { inspectorLayout, isRelevant, MIXED, TYPE_LABEL } from './inspector/layout.js';
@@ -122,8 +123,47 @@ function namesOf(field) {
  * @param {*} value - the new value
  */
 function apply(field, value) {
-	for (const node of layout.value.nodes)
+
+	for (const node of layout.value.nodes) {
+
+		// Changing a drawing's resolution is not a field edit — it changes how
+		// big everything in it is, so the original has to be re-read. One
+		// command, so it is one undo, and the path nodes keep their ids so a job
+		// that cuts one of them still cuts it.
+		if (node.type === NodeType.SVG_DOC && field === 'pixelsPerInch') {
+			reread(node, value);
+			continue;
+		}
+
 		store.dispatch(setField(store.document, node.id, field, value));
+	}
+}
+
+/**
+ * Re-reads a drawing at a new resolution.
+ *
+ * The geometry is written into the project before the command is dispatched,
+ * the way an import does — it is immutable and keyed, so it never goes through
+ * the undo system, and the entry an undo orphans is what its redo wants back.
+ *
+ * @param {Object} doc - the SvgDoc node
+ * @param {Number} pixelsPerInch - the new resolution
+ */
+function reread(doc, pixelsPerInch) {
+
+	try {
+
+		const prepared = prepareSvgReimport(store.project, doc.id, { pixelsPerInch });
+
+		Object.assign(store.project.geometry, prepared.geometry);
+		store.dispatch(prepared.command);
+	}
+	catch (error) {
+		// the drawing's original is missing, or it came back a different shape.
+		// Say so on the node rather than in a dialog, which is where every other
+		// note about this drawing already is
+		store.dispatch(setField(store.document, doc.id, 'notes', error.message, { coalesce: false }));
+	}
 }
 
 /**

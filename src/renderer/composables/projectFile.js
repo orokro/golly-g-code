@@ -327,11 +327,17 @@ export function useProjectFile(options) {
 			}
 		}
 
-		if (warnings.length > 0)
+		// A modal ONLY when nothing arrived, because then there is nothing on
+		// screen to look at instead. A successful import's notes live on the
+		// drawing itself, in the Inspector, next to the setting that answers the
+		// commonest one of them -- a dialog you dismiss every single time is a
+		// dialog you stop reading, and the resolution note fires for every file
+		// that states no physical size, which is most of them.
+		if (imported === 0 && warnings.length > 0)
 			await api.messageBox({
-				type: imported === 0 ? 'error' : 'info',
+				type: 'error',
 				buttons: ['OK'],
-				message: imported === 0 ? 'Nothing could be imported.' : 'Imported, with notes.',
+				message: 'Nothing could be imported.',
 				detail: warnings.slice(0, 12).join('\n'),
 			});
 

@@ -184,7 +184,7 @@ export function gridSpacing(scale, minPixels = 8) {
 		return 10;
 
 	const steps = [1, 2, 5];
-	let power = -3;
+	const power = -3;
 
 	for (let i = 0; i < 60; i += 1) {
 

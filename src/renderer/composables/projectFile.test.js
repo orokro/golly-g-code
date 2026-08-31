@@ -448,7 +448,18 @@ describe('importing drawings', () => {
 		return f.file.importSvg(['/art/bad.svg', '/art/good.svg']).then((result) => {
 			expect(result.imported).toBe(1);
 			expect(result.warnings.join(' ')).toMatch(/bad\.svg/);
-			expect(f.api.asked.at(-1)).toMatchObject({ type: 'info' });
+		});
+	});
+
+	it('does NOT open a dialog when something did arrive', () => {
+		// the resolution note fires for every drawing that states no physical
+		// size, which is most of them, and a dialog you dismiss every single time
+		// is a dialog you stop reading. The notes live on the drawing instead
+		const f = fixture();
+		plantText(f, '/art/good.svg', SVG);
+
+		return f.file.importSvg(['/art/good.svg']).then(() => {
+			expect(f.api.messageBox).not.toHaveBeenCalled();
 		});
 	});
 

@@ -28,6 +28,7 @@
  */
 
 import { importSvgDocument } from '../svg/document.js';
+import { boundsOfSubPaths, unionBounds, sizeOf } from '../path/bounds.js';
 import { NodeType, createNode } from './nodes.js';
 
 /**
@@ -65,8 +66,13 @@ export function prepareSvgImport(svgText, options = {}) {
 
 	const imported = importSvgDocument(svgText, pixelsPerInch === undefined ? {} : { pixelsPerInch });
 	const source = uniqueName(filename, existingSources);
+	const measured = measure(imported);
 
-	const doc = createNode(NodeType.SVG_DOC, { name: filename, source }, { newId });
+	const doc = createNode(NodeType.SVG_DOC, {
+		name: filename,
+		source,
+		...measured,
+	}, { newId });
 
 	/** @type {Object<String, *>} */
 	const geometry = {};
@@ -102,6 +108,120 @@ export function prepareSvgImport(svgText, options = {}) {
 		geometry,
 		warnings: imported.warnings,
 		source,
+	};
+}
+
+
+/**
+ * What an import turned out to be, as fields for the SvgDoc node.
+ *
+ * The size is the artwork's own bounding box rather than the document's stated
+ * canvas, because it is the number that can be checked: you can measure the
+ * thing you drew, and you cannot measure the whitespace around it. If it
+ * disagrees with the ruler, the resolution was wrong.
+ *
+ * @param {Object} imported - what `importSvgDocument` returned
+ * @returns {Object} `{ pixelsPerInch, dpiDependent, widthMm, heightMm, notes }`
+ */
+function measure(imported) {
+
+	const box = unionBounds(imported.shapes.map((shape) => boundsOfSubPaths(shape.subPaths)));
+	const { width, height } = sizeOf(box);
+
+	return {
+		pixelsPerInch: imported.viewport?.pixelsPerInch ?? 96,
+		dpiDependent: imported.viewport?.dpiDependent === true,
+		widthMm: round(width),
+		heightMm: round(height),
+		notes: imported.warnings.join('\n'),
+	};
+}
+
+/**
+ * Rounds a measured length to something worth storing.
+ *
+ * @param {Number} value - millimetres
+ * @returns {Number} four decimals, which is far past what the machine resolves
+ */
+function round(value) {
+	return Number(value.toFixed(4));
+}
+
+
+/**
+ * Re-reads a drawing at a different resolution.
+ *
+ * The original SVG is kept verbatim precisely so this is possible: nothing is
+ * re-parsed from our own output, and the result is exactly what a fresh import
+ * at that resolution would have produced.
+ *
+ * The PATH NODES KEEP THEIR IDS. Only what they point at changes, so a job that
+ * cuts one of them still cuts it — which is the whole reason to do this as a
+ * re-read rather than as a delete and re-import. The old geometry is left
+ * behind, unreferenced, and collected on save like anything else undo might
+ * still want back.
+ *
+ * @param {Object} project - `{ document, geometry, sources }`
+ * @param {String} docId - the SvgDoc node
+ * @param {Object} options - options
+ * @param {Number} options.pixelsPerInch - the resolution to read it at
+ * @returns {Object} `{ command, geometry }` — dispatch the one, assign the other
+ * @throws {Error} when the drawing is not there, or comes out a different shape
+ */
+export function prepareSvgReimport(project, docId, options) {
+
+	const { pixelsPerInch } = options ?? {};
+	const doc = project.document.nodes[docId];
+
+	if (doc?.type !== NodeType.SVG_DOC)
+		throw new Error(`"${docId}" is not an imported drawing.`);
+
+	const text = project.sources?.[doc.source];
+
+	if (typeof text !== 'string')
+		throw new Error(`The original of ${doc.name} is not in this project, so it cannot be re-read.`);
+
+	const imported = importSvgDocument(text, { pixelsPerInch });
+	const children = doc.children ?? [];
+
+	// the same file at a different resolution is the same shapes at a different
+	// scale, so a different count means an assumption here is wrong and it is
+	// better to say so than to guess which path became which
+	if (imported.shapes.length !== children.length)
+		throw new Error(
+			`Re-reading ${doc.name} produced ${imported.shapes.length} shapes where the`
+			+ ` project has ${children.length}.`);
+
+	/** @type {Object<String, *>} */
+	const geometry = {};
+
+	/** @type {Object<String, String>} */
+	const assigned = {};
+
+	imported.shapes.forEach((shape, index) => {
+
+		const id = `g-${children[index]}-${pixelsPerInch}`;
+
+		geometry[id] = { subPaths: shape.subPaths, fillRule: shape.fillRule, tag: shape.tag };
+		assigned[children[index]] = id;
+	});
+
+	const measured = measure(imported);
+
+	return {
+		geometry,
+		command: {
+			label: 'Set resolution',
+			touches: [docId],
+			coalesceKey: `resolution:${docId}`,
+			apply: (state) => {
+
+				Object.assign(state.nodes[docId], measured, { pixelsPerInch });
+
+				for (const [pathId, geometryId] of Object.entries(assigned))
+					state.nodes[pathId].geometry = geometryId;
+			},
+		},
 	};
 }
 

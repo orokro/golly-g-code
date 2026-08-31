@@ -6,7 +6,7 @@ import { folderOf, childrenOf, validateTree } from './tree.js';
 import { createHistory } from './history.js';
 import { nodeDriver } from './snapshot.js';
 import { addSubtree, removeNode } from './commands.js';
-import { prepareSvgImport, uniqueName, summarise } from './import.js';
+import { prepareSvgImport, prepareSvgReimport, uniqueName, summarise } from './import.js';
 
 /** Deterministic ids. */
 const counter = (prefix = 'n') => { let k = 0; return () => `${prefix}${(k += 1)}`; };
@@ -235,5 +235,144 @@ describe('adding it to a document', () => {
 
 		h.undo(document);
 		expect(childrenOf(document, prepared.doc.id)).toHaveLength(4);
+	});
+});
+
+
+describe('re-reading a drawing at a different resolution', () => {
+
+	/** A drawing with no physical size, so its scale is an assumption. */
+	const UNITLESS = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">'
+		+ '<rect id="square" x="0" y="0" width="96" height="96"/></svg>';
+
+	/**
+	 * A project with that drawing imported.
+	 *
+	 * @param {Number} [ppi] - the resolution to import at
+	 * @returns {Object} `{ project, doc, path }`
+	 */
+	function imported(ppi) {
+
+		const newId = counter('i');
+		const project = createProject({ newId });
+		const prepared = prepareSvgImport(UNITLESS, {
+			filename: 'square.svg',
+			newId,
+			...(ppi === undefined ? {} : { pixelsPerInch: ppi }),
+		});
+
+		project.sources[prepared.source] = UNITLESS;
+		Object.assign(project.geometry, prepared.geometry);
+
+		for (const node of prepared.nodes)
+			project.document.nodes[node.id] = node;
+
+		folderOf(project.document, FolderRole.SVGS).children.push(prepared.doc.id);
+
+		return { project, doc: prepared.doc, path: prepared.nodes[1] };
+	}
+
+	it('records what the import turned out to be, so it can be checked', () => {
+		// 96 units at 96 per inch is one inch, which is 25.4mm. Measure the real
+		// thing against this: if it disagrees, the resolution is wrong
+		const { doc } = imported();
+
+		expect(doc.pixelsPerInch).toBe(96);
+		expect(doc.dpiDependent).toBe(true);
+		expect(doc.widthMm).toBeCloseTo(25.4, 3);
+		expect(doc.heightMm).toBeCloseTo(25.4, 3);
+	});
+
+	it('says nothing needs assuming when the file states a real size', () => {
+		const newId = counter('p');
+		const prepared = prepareSvgImport(SVG, { filename: 'parts.svg', newId });
+
+		expect(prepared.doc.dpiDependent).toBe(false);
+	});
+
+	it('keeps the importer’s notes on the drawing rather than in a dialog', () => {
+		const { doc } = imported();
+
+		expect(doc.notes).toBeTruthy();
+	});
+
+	it('rescales everything when the resolution changes', () => {
+		const { project, doc } = imported();
+		const { command, geometry } = prepareSvgReimport(project, doc.id, { pixelsPerInch: 48 });
+
+		Object.assign(project.geometry, geometry);
+		createHistory({ driver: nodeDriver, verify: true }).dispatch(project.document, command);
+
+		// half the resolution, twice the size
+		expect(project.document.nodes[doc.id].widthMm).toBeCloseTo(50.8, 3);
+		expect(project.document.nodes[doc.id].pixelsPerInch).toBe(48);
+	});
+
+	it('KEEPS the path ids, so a job that cuts one still cuts it', () => {
+		// the whole reason this is a re-read rather than a delete and re-import
+		const { project, doc, path } = imported();
+		const before = project.document.nodes[path.id].geometry;
+
+		const { command, geometry } = prepareSvgReimport(project, doc.id, { pixelsPerInch: 72 });
+		Object.assign(project.geometry, geometry);
+		createHistory({ driver: nodeDriver, verify: true }).dispatch(project.document, command);
+
+		expect(project.document.nodes[path.id]).toBeDefined();
+		expect(project.document.nodes[path.id].geometry).not.toBe(before);
+		expect(validateTree(project.document)).toEqual([]);
+	});
+
+	it('is one undo, and undoing it puts the old scale back', () => {
+		const { project, doc } = imported();
+		const h = createHistory({ driver: nodeDriver, verify: true });
+
+		const { command, geometry } = prepareSvgReimport(project, doc.id, { pixelsPerInch: 48 });
+		Object.assign(project.geometry, geometry);
+		h.dispatch(project.document, command);
+
+		expect(h.depth().past).toBe(1);
+
+		h.undo(project.document);
+		expect(project.document.nodes[doc.id].pixelsPerInch).toBe(96);
+		expect(project.document.nodes[doc.id].widthMm).toBeCloseTo(25.4, 3);
+	});
+
+	it('leaves the old geometry behind, which is what the redo wants', () => {
+		const { project, doc, path } = imported();
+		const old = project.document.nodes[path.id].geometry;
+		const h = createHistory({ driver: nodeDriver, verify: true });
+
+		const { command, geometry } = prepareSvgReimport(project, doc.id, { pixelsPerInch: 48 });
+		Object.assign(project.geometry, geometry);
+		h.dispatch(project.document, command);
+		h.undo(project.document);
+
+		expect(project.geometry[old]).toBeDefined();
+		expect(project.document.nodes[path.id].geometry).toBe(old);
+	});
+
+	it('refuses when the original is not in the project', () => {
+		const { project, doc } = imported();
+		delete project.sources[doc.source];
+
+		expect(() => prepareSvgReimport(project, doc.id, { pixelsPerInch: 72 }))
+			.toThrow(/original of square\.svg is not in this project/);
+	});
+
+	it('refuses when the drawing comes back a different shape', () => {
+		// a canary: the same file at a different resolution is the same shapes at
+		// a different scale, so a different count means something else is wrong
+		const { project, doc } = imported();
+		project.sources[doc.source] = UNITLESS.replace('</svg>', '<rect x="0" y="0" width="1" height="1"/></svg>');
+
+		expect(() => prepareSvgReimport(project, doc.id, { pixelsPerInch: 72 }))
+			.toThrow(/produced 2 shapes where the project has 1/);
+	});
+
+	it('refuses a node that is not a drawing', () => {
+		const { project } = imported();
+
+		expect(() => prepareSvgReimport(project, project.document.root, { pixelsPerInch: 72 }))
+			.toThrow(/is not an imported drawing/);
 	});
 });

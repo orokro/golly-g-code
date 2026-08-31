@@ -488,6 +488,47 @@ export const FIELDS = Object.freeze({
 			label: 'File', desc: 'The file this was imported from. The original is kept verbatim.',
 			kind: Kind.TEXT, quantity: Quantity.NONE, default: '',
 		},
+
+		// A drawing that states no physical size -- a viewBox and nothing else --
+		// has no scale of its own, so one has to be assumed. This is where that
+		// assumption lives, and changing it re-reads the kept original at the new
+		// resolution. It used to be a dialog on every import, which is the wrong
+		// shape for a decision you want to make AFTER seeing the result and change
+		// again afterwards.
+		pixelsPerInch: {
+			label: 'Resolution',
+			desc: 'How many units to a physical inch, for a drawing that does not say.'
+				+ ' 96 is the CSS standard and Inkscape 0.92 and later; 72 is points'
+				+ ' and what Illustrator usually writes; 90 is older Inkscape.'
+				+ ' Ignored when the file states a real size in mm or inches.',
+			kind: Kind.NUMBER, quantity: Quantity.NONE, default: 96, min: 1, max: 2400, step: 1,
+		},
+
+		dpiDependent: {
+			label: 'Needs a resolution',
+			desc: 'True when the drawing states no physical size, so the resolution'
+				+ ' above is what decides how big it is.',
+			kind: Kind.BOOLEAN, quantity: Quantity.NONE, default: false,
+		},
+
+		widthMm: {
+			label: 'Drawing width',
+			desc: 'How wide the imported artwork came out. Measure the real thing'
+				+ ' against this — if it disagrees, the resolution is wrong.',
+			kind: Kind.NUMBER, quantity: Quantity.LENGTH, default: 0, min: 0, max: 100_000,
+		},
+
+		heightMm: {
+			label: 'Drawing height',
+			desc: 'How tall the imported artwork came out.',
+			kind: Kind.NUMBER, quantity: Quantity.LENGTH, default: 0, min: 0, max: 100_000,
+		},
+
+		notes: {
+			label: 'Import notes',
+			desc: 'Anything the importer had to say about this file.',
+			kind: Kind.TEXT, quantity: Quantity.NONE, default: '',
+		},
 	}),
 
 	// --------------------------------------------------------------- SvgPath
