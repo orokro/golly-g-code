@@ -36,9 +36,11 @@ const UNKNOWN = Object.freeze({ x: NaN, y: NaN, z: NaN });
  *
  * @param {Object} plan - the program to emit
  * @param {Number} plan.safeZ - Z to travel at, millimetres, above the work
- * @param {Array<Object>} plan.jobs - each `{ name, tool, feeds, passes }`, where
- *   tool is `{ number, diameter, rpm }`, feeds is `{ cut, plunge }` in mm/min,
- *   and passes is `[{ z, runs }]` with runs an array of polylines
+ * @param {Array<Object>} plan.jobs - each `{ id, name, tool, feeds, passes, ramp }`,
+ *   where tool is `{ number, diameter, rpm }`, feeds is `{ cut, plunge }` in
+ *   mm/min, and passes is `[{ z, runs }]` with runs an array of polylines. `id`
+ *   is optional and rides in the breadcrumb so a caller can map lines back to
+ *   the job without matching on a name two jobs might share
  * @param {Object} [plan.program] - optional `{ name }` for the header comment
  * @param {Object} [options] - options
  * @param {Object} [options.dialect] - the dialect; a default GRBL post if absent
@@ -46,7 +48,10 @@ const UNKNOWN = Object.freeze({ x: NaN, y: NaN, z: NaN });
  * @param {Number} [options.arcTolerance] - refit runs as arcs within this
  *   deviation, in millimetres, and emit G2/G3. Omit to emit straight moves only
  * @param {Object} [options.ramp] - descend into each cut along the path instead
- *   of straight down; `{ angleRadians }`. Omit to plunge vertically
+ *   of straight down; `{ angleRadians }`. Omit to plunge vertically. A job may
+ *   carry its own `ramp` to override this, including `null` to plunge where the
+ *   rest of the program ramps — ramping is a per-job decision in the document,
+ *   so it has to be one here
  * @returns {Object} `{ lines, warnings, stats }`
  * @throws {RangeError} when the plan is unusable
  */
@@ -147,12 +152,19 @@ export function emitProgram(plan, options = {}) {
 	 * Ramping from safe Z would waste most of the ramp in fresh air. A pass only
 	 * has to descend from wherever the pass above it finished.
 	 *
+	 * The passes of THIS job, and no other. Reading every job's passes was a
+	 * gouge: two jobs stepping down by 2mm and 2.5mm interleave into 2, 2.5, 4,
+	 * 5, 6, 7, so the second job's first pass would rapid to Z-2 — a depth only
+	 * the FIRST job had ever cut, and only where the first job cut it. The
+	 * program rapids down to this height, so being wrong about it is not a
+	 * slower cut, it is the cutter arriving at feedless speed inside the work.
+	 *
+	 * @param {Object} job - the job being cut
 	 * @param {Object} pass - the pass being cut
 	 * @returns {Number} Z to begin the ramp at
 	 */
-	const topOf = (pass) => {
-		const above = jobs
-			.flatMap((job) => job.passes ?? [])
+	const topOf = (job, pass) => {
+		const above = (job.passes ?? [])
 			.map((other) => other.z)
 			.filter((z) => z > pass.z);
 		return above.length > 0 ? Math.min(...above) : Math.min(safeZ, plan.topZ ?? 0);
@@ -167,10 +179,17 @@ export function emitProgram(plan, options = {}) {
 		const cut = feeds.cut;
 		const plunge = feeds.plunge ?? feeds.cut;
 
+		// `ramp` in the job, when present at all, wins outright -- an explicit
+		// `null` there means "plunge this one", which `??` would quietly discard
+		const jobRamp = 'ramp' in job ? job.ramp ?? undefined : ramp;
+
 		if (!(cut > 0))
 			throw new RangeError(`job '${name}' has no cutting feed rate`);
 
-		lines.push(`;<job name="${String(name).replace(/["<>\n\r]/g, '')}">`);
+		const clean = (text) => String(text).replace(/["<>\n\r]/g, '');
+
+		lines.push(`;<job name="${clean(name)}"`
+			+ `${job.id === undefined ? '' : ` id="${clean(job.id)}"`}>`);
 
 		// a new tool means stop, retract, pause for the operator, spin up again
 		const changed = tool !== null && jobTool.number !== tool.number;
@@ -206,7 +225,7 @@ export function emitProgram(plan, options = {}) {
 				rapidTo({ z: safeZ });
 				rapidTo({ x: points[0][0], y: points[0][1] });
 
-				if (ramp === undefined) {
+				if (jobRamp === undefined) {
 
 					feedTo({ z: pass.z }, plunge);
 					stats.plunges++;
@@ -216,9 +235,9 @@ export function emitProgram(plan, options = {}) {
 					// Descend along the line rather than into it. The ramp goes
 					// out and comes back, so it finishes at the start of the run
 					// at full depth and the cut proper still runs the whole path.
-					const from = topOf(pass);
+					const from = topOf(job, pass);
 					const entry = rampEntry(points, from, pass.z, {
-						...ramp, cutFeed: cut, plungeFeed: plunge,
+						...jobRamp, cutFeed: cut, plungeFeed: plunge,
 					});
 					warnings.push(...entry.warnings.map((w) => `job '${name}': ${w}`));
 

@@ -36,9 +36,9 @@
  *
  * ## Where a tab lives
  *
- * A tab is anchored to the **source path**, as a normalised position along its
- * arc length, with a length in real millimetres. Not to the toolpath, and not as
- * a percentage.
+ * A tab is anchored to the **source path**, as an arc length along it in real
+ * millimetres, with a length in real millimetres too. Not to the toolpath, and
+ * not as a percentage.
  *
  * That choice is the whole design, and it follows from what a tab physically is:
  * a bridge of material of a certain width, in a certain place on the part. Both
@@ -175,8 +175,9 @@ export function projectOnto(path, point, lengths = arcLengths(path)) {
  * @param {Array<Number[]>} source - the path the tabs are anchored to
  * @param {Array<Number[]>} toolpath - the offset path the tool will follow
  * @param {Array<Object>} tabs - each `{ position, length, depth }`; position is
- *   normalised 0..1 along the source, length and depth are millimetres, and
- *   length and depth each fall back to the job default when not given
+ *   the arc length in MILLIMETRES from the start of the source, length and depth
+ *   are millimetres too, and length and depth each fall back to the job default
+ *   when not given
  * @param {Object} [options] - options
  * @param {Number} [options.defaultLength=6] - length for tabs that do not set one
  * @param {Number} [options.defaultDepth=0] - depth for tabs that do not set one;
@@ -213,8 +214,8 @@ export function placeTabs(source, toolpath, tabs, options = {}) {
 		const length = tab.length ?? defaultLength;
 		const depth = tab.depth ?? defaultDepth;
 
-		if (!(position >= 0 && position <= 1))
-			throw new RangeError(`tab position must be within 0..1, got ${position}`);
+		if (!(position >= 0))
+			throw new RangeError(`tab position must be zero or more, got ${position}`);
 
 		if (!(length > 0))
 			throw new RangeError(`tab length must be positive, got ${length}`);
@@ -232,8 +233,17 @@ export function placeTabs(source, toolpath, tabs, options = {}) {
 			continue;
 		}
 
-		// both ends measured on the source, so the bridge is the width asked for
-		const middle = position * sourceTotal;
+		// Both ends measured on the source, in millimetres, so the bridge is the
+		// width asked for. Millimetres rather than a 0..1 fraction because that is
+		// what a tab IS -- see the header -- and because a fraction moves every tab
+		// on a path the moment the path is edited, which is exactly when you least
+		// want your holding tabs to wander.
+		if (position > sourceTotal) {
+			warnings.push(`a tab ${position}mm along does not fit on a`
+				+ ` ${sourceTotal.toFixed(1)}mm path; it was moved to the end`);
+		}
+
+		const middle = Math.min(position, sourceTotal);
 
 		// A congruent toolpath is the source moved rigidly, so the corresponding
 		// point is the one at the same fraction of the way along. Projection

@@ -15,6 +15,13 @@ const arc = (radius, sweep = Math.PI / 2, steps = 400) => {
 
 const lengthOf = (path) => arcLengths(path)[path.length - 1];
 
+/**
+ * A tab position in millimetres, written as the fraction of the source it used
+ * to be. Positions are real arc lengths now (see tabs.js); the tests still read
+ * better as "halfway along" than as "37.9mm along".
+ */
+const along = (source, fraction) => lengthOf(source) * fraction;
+
 /** Where a toolpath span sits back on the source, in source arc length. */
 const backOntoSource = (source, toolpath, span) => {
 	const toolLengths = arcLengths(toolpath);
@@ -56,7 +63,7 @@ describe('a tab is a width of material, not a length of toolpath', () => {
 	it('is exactly the asked-for width on a straight line', () => {
 		const source = [[0, 0], [100, 0]];
 		const { path } = offsetAlongNormals(source, 3, { side: Side.LEFT, tolerance: TOLERANCE });
-		const { spans } = placeTabs(source, path, [{ position: 0.5, length: 8 }]);
+		const { spans } = placeTabs(source, path, [{ position: along(source, 0.5), length: 8 }]);
 
 		expect(spans).toHaveLength(1);
 		expect(spans[0].end - spans[0].start).toBeCloseTo(8, 6);
@@ -71,7 +78,7 @@ describe('a tab is a width of material, not a length of toolpath', () => {
 
 		for (const radius of [0.5, 1.5875, 3, 6]) {
 			const { path } = offsetAlongNormals(source, radius, { side: Side.LEFT, tolerance: TOLERANCE });
-			const { spans } = placeTabs(source, path, [{ position: 0.5, length: 8 }]);
+			const { spans } = placeTabs(source, path, [{ position: along(source, 0.5), length: 8 }]);
 			expect(spans, `${radius}mm`).toHaveLength(1);
 			footprints.push(backOntoSource(source, path, spans[0]));
 		}
@@ -92,7 +99,7 @@ describe('a tab is a width of material, not a length of toolpath', () => {
 		const outside = offsetAlongNormals(source, 6, { side: Side.RIGHT, tolerance: TOLERANCE }).path;
 		const inside = offsetAlongNormals(source, 6, { side: Side.LEFT, tolerance: TOLERANCE }).path;
 
-		const tab = [{ position: 0.5, length: 8 }];
+		const tab = [{ position: along(source, 0.5), length: 8 }];
 		const out = placeTabs(source, outside, tab).spans[0];
 		const inn = placeTabs(source, inside, tab).spans[0];
 
@@ -110,8 +117,8 @@ describe('a tab is a width of material, not a length of toolpath', () => {
 	it('merges tabs that overlap, rather than wobbling Z inside one bridge', () => {
 		const source = [[0, 0], [100, 0]];
 		const { spans, warnings } = placeTabs(source, source, [
-			{ position: 0.5, length: 10 },
-			{ position: 0.52, length: 10 },
+			{ position: along(source, 0.5), length: 10 },
+			{ position: along(source, 0.52), length: 10 },
 		]);
 		expect(spans).toHaveLength(1);
 		expect(spans[0].start).toBeCloseTo(45, 6);
@@ -121,15 +128,34 @@ describe('a tab is a width of material, not a length of toolpath', () => {
 
 	it('refuses a tab longer than the path instead of leaving the part uncut', () => {
 		const source = [[0, 0], [20, 0]];
-		const { spans, warnings } = placeTabs(source, source, [{ position: 0.5, length: 50 }]);
+		const { spans, warnings } = placeTabs(source, source, [{ position: along(source, 0.5), length: 50 }]);
 		expect(spans).toHaveLength(0);
 		expect(warnings.join(' ')).toMatch(/does not fit/);
 	});
 
+	it('is measured in millimetres, not as a fraction', () => {
+
+		// The distinguishing case: 0.5 used to mean the middle of anything. It now
+		// means half a millimetre from the start, and on a 20mm path the middle is
+		// at 10. A fraction-based implementation puts this tab at 10 and passes
+		// every other test in this file.
+		const source = [[0, 0], [20, 0]];
+		const { spans } = placeTabs(source, source, [{ position: 0.5, length: 2 }]);
+		expect(spans[0].start).toBeCloseTo(0, 6);
+		expect(spans[0].end).toBeCloseTo(1.5, 6);
+	});
+
+	it('moves a tab past the end back onto the path, and says so', () => {
+		const source = [[0, 0], [20, 0]];
+		const { spans, warnings } = placeTabs(source, source, [{ position: 400, length: 4 }]);
+		expect(spans[0].end).toBeCloseTo(20, 6);
+		expect(warnings.join(' ')).toMatch(/moved to the end/);
+	});
+
 	it('rejects a malformed tab', () => {
 		const source = [[0, 0], [20, 0]];
-		expect(() => placeTabs(source, source, [{ position: 1.5, length: 2 }])).toThrow(RangeError);
-		expect(() => placeTabs(source, source, [{ position: 0.5, length: 0 }])).toThrow(RangeError);
+		expect(() => placeTabs(source, source, [{ position: -1, length: 2 }])).toThrow(RangeError);
+		expect(() => placeTabs(source, source, [{ position: along(source, 0.5), length: 0 }])).toThrow(RangeError);
 	});
 });
 
@@ -146,7 +172,7 @@ describe('what the bridge actually measures', () => {
 
 		for (const radius of [0.5, 1.5875, 3]) {
 			const { path } = offsetAlongNormals(source, radius, { side: Side.LEFT, tolerance: TOLERANCE });
-			const { spans } = placeTabs(source, path, [{ position: 0.5, length: 8 }]);
+			const { spans } = placeTabs(source, path, [{ position: along(source, 0.5), length: 8 }]);
 			expect(spans[0].end - spans[0].start, `${radius}mm`).toBeCloseTo(8, 6);
 
 			// and the standing material, measured against the full-depth toolpath
@@ -170,14 +196,14 @@ describe('what the bridge actually measures', () => {
 
 	it('says so when a tab is too narrow for the cutter to leave anything', () => {
 		const source = [[0, 0], [100, 0]];
-		const { warnings } = placeTabs(source, source, [{ position: 0.5, length: 3 }],
+		const { warnings } = placeTabs(source, source, [{ position: along(source, 0.5), length: 3 }],
 			{ toolRadius: 1.5875 });
 		expect(warnings.join(' ')).toMatch(/tapers to nothing/);
 	});
 
 	it('stays quiet for a tab comfortably wider than the cutter', () => {
 		const source = [[0, 0], [100, 0]];
-		const { warnings } = placeTabs(source, source, [{ position: 0.5, length: 8 }],
+		const { warnings } = placeTabs(source, source, [{ position: along(source, 0.5), length: 8 }],
 			{ toolRadius: 1.5875 });
 		expect(warnings).toEqual([]);
 	});
@@ -246,7 +272,7 @@ describe('per-tab depth and length, with job defaults', () => {
 	const source = [[0, 0], [200, 0]];
 
 	it('falls back to the job default for anything a tab does not set', () => {
-		const { spans } = placeTabs(source, source, [{ position: 0.5 }],
+		const { spans } = placeTabs(source, source, [{ position: along(source, 0.5) }],
 			{ defaultLength: 10, defaultDepth: 2 });
 		expect(spans[0].end - spans[0].start).toBeCloseTo(10, 6);
 		expect(spans[0].depth).toBe(2);
@@ -254,7 +280,7 @@ describe('per-tab depth and length, with job defaults', () => {
 
 	it('lets a tab override either one', () => {
 		const { spans } = placeTabs(source, source,
-			[{ position: 0.25, length: 4 }, { position: 0.75, depth: 3.5 }],
+			[{ position: along(source, 0.25), length: 4 }, { position: along(source, 0.75), depth: 3.5 }],
 			{ defaultLength: 10, defaultDepth: 2 });
 		expect(spans[0].end - spans[0].start).toBeCloseTo(4, 6);
 		expect(spans[0].depth).toBe(2);
@@ -264,20 +290,20 @@ describe('per-tab depth and length, with job defaults', () => {
 
 	it('gives merged tabs the shallower depth, so the most material survives', () => {
 		const { spans } = placeTabs(source, source, [
-			{ position: 0.5, length: 20, depth: 3 },
-			{ position: 0.55, length: 20, depth: 1 },
+			{ position: along(source, 0.5), length: 20, depth: 3 },
+			{ position: along(source, 0.55), length: 20, depth: 1 },
 		]);
 		expect(spans).toHaveLength(1);
 		expect(spans[0].depth).toBe(1);
 	});
 
 	it('rejects a negative depth', () => {
-		expect(() => placeTabs(source, source, [{ position: 0.5, depth: -1 }])).toThrow(RangeError);
+		expect(() => placeTabs(source, source, [{ position: along(source, 0.5), depth: -1 }])).toThrow(RangeError);
 	});
 
 	it('makes tabs of different depths break on different passes', () => {
 		const { spans } = placeTabs(source, source,
-			[{ position: 0.25, depth: 1 }, { position: 0.75, depth: 3 }]);
+			[{ position: along(source, 0.25), depth: 1 }, { position: along(source, 0.75), depth: 3 }]);
 
 		expect(planPass(source, spans, -2)).toHaveLength(2);
 		expect(planPass(source, spans, -4)).toHaveLength(3);
@@ -293,7 +319,7 @@ describe('measuring what is actually left holding the part', () => {
 	it('finds a bridge exactly where the tab is, the size the tab is', () => {
 		const source = [[0, 0], [200, 0]];
 		const { path } = offsetAlongNormals(source, R, { side: Side.LEFT, tolerance: TOLERANCE });
-		const { spans } = placeTabs(source, path, [{ position: 0.5, length: 8, depth: 3 }]);
+		const { spans } = placeTabs(source, path, [{ position: along(source, 0.5), length: 8, depth: 3 }]);
 		const runs = planPass(path, spans, -4);
 
 		const bridges = measureBridges(source, runs, R);
@@ -305,7 +331,7 @@ describe('measuring what is actually left holding the part', () => {
 	it('finds nothing standing on a pass the tab does not break', () => {
 		const source = [[0, 0], [200, 0]];
 		const { path } = offsetAlongNormals(source, R, { side: Side.LEFT, tolerance: TOLERANCE });
-		const { spans } = placeTabs(source, path, [{ position: 0.5, length: 8, depth: 3 }]);
+		const { spans } = placeTabs(source, path, [{ position: along(source, 0.5), length: 8, depth: 3 }]);
 		expect(measureBridges(source, planPass(path, spans, -2), R)).toEqual([]);
 	});
 
@@ -337,7 +363,7 @@ describe('a hand-placed tab survives changing the job around it', () => {
 
 	const TOLERANCE = 0.005;
 	const source = [[0, 0], [60, 0], [60, 40], [120, 40], [120, 0], [180, 0]];
-	const hand = [{ position: 0.2, length: 8, depth: 3 }, { position: 0.7, length: 8, depth: 3 }];
+	const hand = [{ position: along(source, 0.2), length: 8, depth: 3 }, { position: along(source, 0.7), length: 8, depth: 3 }];
 
 	/**
 	 * How far the middle of a toolpath span is from where the tab was placed.
@@ -352,7 +378,7 @@ describe('a hand-placed tab survives changing the job around it', () => {
 	 */
 	const missBy = (toolpath, span, position) => {
 		const sourceLengths = arcLengths(source);
-		const placed = pointAt(source, position * sourceLengths[source.length - 1], sourceLengths);
+		const placed = pointAt(source, position, sourceLengths);
 		const toolLengths = arcLengths(toolpath);
 		const middle = pointAt(toolpath, (span.start + span.end) / 2, toolLengths);
 		return Math.hypot(middle[0] - placed[0], middle[1] - placed[1]);
@@ -393,7 +419,7 @@ describe('a hand-placed tab survives changing the job around it', () => {
 		// the shifted path to the tab was around a corner.
 		const { path, congruent } = openToolpath(source,
 			{ mode: OpenMode.HEADING, distance: 6, angleRadians: Math.PI / 2 });
-		const { spans } = placeTabs(source, path, [{ position: 0.7, length: 8, depth: 3 }],
+		const { spans } = placeTabs(source, path, [{ position: along(source, 0.7), length: 8, depth: 3 }],
 			{ congruent });
 
 		expect(spans[0].start).toBeCloseTo(178, 6);

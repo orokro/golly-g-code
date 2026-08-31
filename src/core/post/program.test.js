@@ -556,6 +556,39 @@ describe('ramping in rather than plunging', () => {
 		expect(arrival).toBeDefined();
 	});
 
+	it('starts a ramp from ITS OWN pass above, not from another job’s', () => {
+
+		// Two jobs stepping down by different amounts interleave: 2, 2.5, 4, 5.
+		// Reading every job's passes made the second job's FIRST pass rapid down
+		// to Z-2 -- a depth only the first job had ever cut, and only where the
+		// first job cut it. The program RAPIDS to this height, so getting it
+		// wrong is the cutter arriving inside the work at traverse speed.
+		const plan = {
+			safeZ: 5,
+			jobs: [
+				{
+					name: 'Coarse', tool: { number: 1, rpm: 12000 }, feeds: { cut: 900, plunge: 300 },
+					passes: [{ z: -2, runs: [line] }, { z: -4, runs: [line] }],
+				},
+				{
+					name: 'Fine', tool: { number: 1, rpm: 12000 }, feeds: { cut: 900, plunge: 300 },
+					passes: [{ z: -2.5, runs: [line] }, { z: -5, runs: [line] }],
+				},
+			],
+		};
+
+		const { text } = emitText(plan, { ramp: { angleRadians: 3 * Math.PI / 180 } });
+		const lines = text.split('\n');
+		const from = lines.indexOf(';<job name="Fine">');
+		const rapids = lines.slice(from, lines.indexOf(';</job>', from))
+			.filter((l) => /^G0 Z/.test(l))
+			.map((l) => Number(l.slice(4)));
+
+		// down to the surface for the first pass, down to its own -2.5 for the
+		// second, and up to safe Z in between
+		expect(rapids).toEqual([5, 0, 5, -2.5]);
+	});
+
 	it('only descends from the pass above, not from safe Z', () => {
 		// ramping the full way from safe Z would spend most of the ramp in air
 		const { text } = emitText(planFor(), { ramp: { angleRadians: 3 * Math.PI / 180 } });

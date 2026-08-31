@@ -1054,6 +1054,54 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
   width over the real toolpath, with a dashed centreline showing where the bit's
   centre goes
 
+### 5.1 The program — done
+
+- [x] `core/project/program.js` is the other half of the seam: `toolpaths.js`
+  says where the cutter goes in XY, this says everything else the machine has to
+  be told — how deep, how many passes, where the tab breaks fall, how it gets
+  into the cut and out again, which bit, how fast, in what order
+- [x] **Coordinates rebased on the work zero.** The document is in workspace
+  millimetres; the puck says where the machine's 0,0 sits on it. Move the puck
+  and the same part cuts elsewhere on the bed with no path changing
+- [x] **Tab positions are millimetres**, not a 0..1 fraction. The Inspector was
+  already writing arc length in mm into a `Quantity.LENGTH` field while
+  `placeTabs` threw a `RangeError` on anything above 1 — so any project with a
+  tab could not have been exported at all. Millimetres wins because it is what a
+  tab IS, because `length` was already in mm, and because a fraction moves every
+  tab the moment the path is edited
+- [x] **A tab finds its own toolpath run.** Source runs are laid end to end into
+  one arc-length space, so a position past the first outline lands in the second;
+  the tab is then placed on whichever toolpath run actually passes closest to it
+- [x] **Ramping is per job**, since `ramp` is a field on the Job. `ramp: null` in
+  a plan means "plunge this one" while the rest of the program ramps
+- [x] Leads are arc length, not radius — a 10mm lead-in puts 10mm of travel in
+  front of the cut — and go on the first and last run of a contour only, never
+  around every tab
+- [x] Dogbones are switched on in the Inspector and implemented nowhere, so the
+  program says so rather than quietly squaring the corners
+- [x] **Hidden is not disabled.** `visible` hides a node in the workspace; a job
+  you can no longer see is still a job. Dropping it from the program silently is
+  the failure mode rule 5 exists for
+- [x] Refuses to emit anything at all when a diagnostic blocks export. Half a
+  program is worse than none: it looks like a file, it loads into a sender, and
+  the part it left out is the part you find out about with a spindle in your hand
+- [x] **Two bugs found by reading the emitted file, not by the tests.** The tool
+  change had no `M6` at all (this machine has no ATC — it is `M5`, `M0`, and a
+  comment naming the bit, which is the whole instruction). And the ramp start
+  height was computed across *every* job's passes: two jobs stepping down 2mm and
+  2.5mm interleave to 2, 2.5, 4, 5, so the second job's first pass rapided to
+  Z-2 — a depth only the first job had cut, and only where it cut it. A rapid,
+  into material. 37 emitter tests passed on either side of that fix
+- [x] Measured by parsing the program back with `core/post/parse.js` and taking a
+  ruler to the moves: a 60mm square cut outside at 3.175mm is 63.175mm across in
+  the file, inside is 56.825mm, a 6mm tab is a 6mm gap on the toolpath, the last
+  pass lands exactly on the target, and no rapid ever travels in X or Y below
+  safe Z or descends past a depth its own job has not already cut
+- [x] Line ↔ job mapping, read back out of the `;<job name id>` breadcrumbs
+  rather than counted while emitting, so the map cannot drift from the file
+
+### 5.2 The G-code window
+
 - [ ] Move `cam-core` into a Web Worker with `AbortController`-style cancellation
 - [ ] **Per-job G-code cache**, invalidated per node — regenerate only the changed job's block and re-splice
 - [ ] Debounce driven by command commits (already free from 3.1)
@@ -1062,7 +1110,7 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
 - [ ] G-code language: Monarch tokenizer (G/M codes, axis words, parameters, comments), hover info for common codes, bracket-matching on `;<job>` breadcrumbs
 - [ ] **Read-only by default**, with an explicit "Edit G-code" toggle that suspends auto-regen — otherwise hand-editing and live regen fight and the user loses work
 - [ ] Export button in the window's toolbar → `.nc`/`.gcode` via Electron dialog
-- [ ] Line ↔ job mapping from the breadcrumb comments
+- [x] Line ↔ job mapping from the breadcrumb comments *(done in 5.1)*
 
 ### ▶ MVP LINE — everything above this can cut real material ◀
 
