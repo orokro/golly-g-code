@@ -10,7 +10,7 @@ import { diagnose, byNode } from '@core/project/diagnostics.js';
 
 import {
 	Drop, SPLIT_FRACTION, flattenTree, canDropInto, resolveDrop,
-	adjustedIndex, rangeBetween, clickSelection, detailLine,
+	adjustedIndex, rangeBetween, clickSelection, detailLine, detailTitle,
 } from './rows.js';
 
 /** Deterministic ids. */
@@ -330,12 +330,23 @@ describe('selecting with modifiers', () => {
 
 describe('the second line of a job row', () => {
 
-	it('is the depth sentence, which is the point of the whole thing', () => {
+	it('is the depth, compactly, because the row is 170 pixels wide', () => {
+		// built from the diagnostic's numbers rather than by trimming its
+		// sentence, which would be parsing our own prose
 		const { project, n } = fixture();
 		const grouped = byNode(diagnose(project));
 
 		expect(detailLine(project.document.nodes[n.a.id], grouped.get(n.a.id)))
-			.toBe('Cuts 1.00mm of 4.00mm — 3.00mm left below.');
+			.toBe('1.00 of 4.00mm · 3.00 left');
+		expect(detailLine(project.document.nodes[n.b.id], grouped.get(n.b.id)))
+			.toBe('through 4.00mm · +1.00');
+	});
+
+	it('keeps the whole sentence in the tooltip', () => {
+		const { project, n } = fixture();
+		const grouped = byNode(diagnose(project));
+
+		expect(detailTitle(grouped.get(n.a.id))).toBe('Cuts 1.00mm of 4.00mm — 3.00mm left below.');
 	});
 
 	it('follows a change of material, which is how the change gets noticed', () => {
@@ -344,7 +355,16 @@ describe('the second line of a job row', () => {
 
 		const grouped = byNode(diagnose(project));
 
-		expect(detailLine(document.nodes[n.b.id], grouped.get(n.b.id))).toContain('13.00mm left');
+		expect(detailLine(document.nodes[n.b.id], grouped.get(n.b.id))).toBe('5.00 of 18.00mm · 13.00 left');
+	});
+
+	it('says when a cut is past the allowance', () => {
+		const { project, document, n } = fixture();
+		document.nodes[n.b.id].cutDepth = 9;
+
+		const grouped = byNode(diagnose(project));
+
+		expect(detailLine(document.nodes[n.b.id], grouped.get(n.b.id))).toBe('4.00mm past the allowance');
 	});
 
 	it('is nothing at all for anything that is not a job', () => {

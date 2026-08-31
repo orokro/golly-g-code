@@ -172,13 +172,17 @@ export function addNode(document, parentId, node, options = {}) {
  * @param {Object[]} nodes - the subtree, its root first
  * @param {Object} [options] - options
  * @param {String} [options.label] - what the undo menu should say
- * @param {Boolean} [options.select=true] - select the root of what was added
+ * @param {Boolean} [options.select=true] - select what was added
+ * @param {String} [options.selectId] - select this instead of the root. Adding a
+ *   job to a project with no tool yet creates the tool too, and the user asked
+ *   for the job — leaving the tool selected means the Inspector shows the wrong
+ *   thing the moment the command lands
  * @returns {Object} a command
  * @throws {TypeError} when the parent is unknown or the subtree is empty
  */
 export function addSubtree(document, parentId, nodes, options = {}) {
 
-	const { select = true } = options;
+	const { select = true, selectId } = options;
 	const parent = document.nodes[parentId];
 
 	if (parent === undefined)
@@ -186,6 +190,9 @@ export function addSubtree(document, parentId, nodes, options = {}) {
 
 	if (Array.isArray(nodes) === false || nodes.length === 0)
 		throw new TypeError('addSubtree needs at least one node');
+
+	if (selectId !== undefined && nodes.some((node) => node.id === selectId) === false)
+		throw new TypeError(`selectId "${selectId}" is not one of the nodes being added`);
 
 	const [root] = nodes;
 	const label = options.label ?? `Add ${root.type.toLowerCase()}`;
@@ -200,8 +207,10 @@ export function addSubtree(document, parentId, nodes, options = {}) {
 
 			state.nodes[parentId].children.push(root.id);
 
-			if (select)
-				state.selection = { active: root.id, ids: [root.id] };
+			if (select) {
+				const chosen = selectId ?? root.id;
+				state.selection = { active: chosen, ids: [chosen] };
+			}
 		},
 	};
 }

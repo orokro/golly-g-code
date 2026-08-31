@@ -16,6 +16,7 @@
  */
 
 import { NodeType, ALLOWED_CHILDREN } from '@core/project/nodes.js';
+import { DepthClass } from '@core/project/diagnostics.js';
 import { parentIndex, parentOf, descendantsOf, isVisible, isLocked } from '@core/project/tree.js';
 
 /** Where a drop would put the dragged node, relative to the row under the cursor. */
@@ -297,11 +298,28 @@ export function clickSelection(options) {
 
 
 /**
+ * Rounds for a row, without a unit on every number.
+ *
+ * @param {Number} value - millimetres
+ * @returns {String} two decimals
+ */
+const mm = (value) => value.toFixed(2);
+
+
+/**
  * A short line describing a node, drawn under its name.
  *
- * Only jobs get one — it is the depth sentence, and it is the whole mechanism
- * for noticing that changing the stock changed what every job does. Everything
- * else is one line, so the list stays readable.
+ * Only jobs get one — it is the depth, and it is the whole mechanism for
+ * noticing that changing the stock changed what every job does. Everything else
+ * is one line, so the list stays readable.
+ *
+ * COMPACT, not the diagnostic's sentence. An outliner row is about 170 pixels
+ * of text at the depth a job sits at, and "Cuts 1.00mm of 4.00mm — 3.00mm left
+ * below." is half as wide again as that, so it would arrive permanently
+ * ellipsised and the numbers — the entire point — would be the part cut off.
+ * Built from the diagnostic's `data` rather than by trimming its message,
+ * because reformatting that string would be parsing our own prose. The full
+ * sentence is still there as the row's tooltip; see `detailTitle`.
  *
  * @param {Object} node - the node
  * @param {Array} diagnostics - this node's diagnostics, from `byNode`
@@ -312,7 +330,27 @@ export function detailLine(node, diagnostics = []) {
 	if (node.type !== NodeType.JOB)
 		return null;
 
-	const depth = diagnostics.find((d) => d.code.startsWith('depth-'));
+	const data = diagnostics.find((d) => d.code.startsWith('depth-'))?.data;
 
-	return depth?.message ?? null;
+	if (data === undefined)
+		return null;
+
+	if (data.depthClass === DepthClass.GROOVE)
+		return `${mm(data.cutDepth)} of ${mm(data.thickness)}mm · ${mm(data.remaining)} left`;
+
+	if (data.depthClass === DepthClass.THROUGH)
+		return `through ${mm(data.thickness)}mm · +${mm(data.into)}`;
+
+	return `${mm(data.past)}mm past the allowance`;
+}
+
+
+/**
+ * The full sentences for a node, for its tooltip.
+ *
+ * @param {Array} diagnostics - this node's diagnostics, from `byNode`
+ * @returns {String} one per line, empty when there are none
+ */
+export function detailTitle(diagnostics = []) {
+	return diagnostics.map((d) => d.message).join('\n');
 }

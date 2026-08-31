@@ -899,15 +899,37 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
   does nothing rather than throwing
 
 ### 3.5 Outliner window
-- [ ] Fixed top-level hierarchy: `Project > Jobs\ > Tool\ > Job > Tab`, plus `SVGs\ > SvgDoc > SvgPath`, `References\`
-- [ ] Lock + eyeball toggles at every level, inherited down
-- [ ] Drag to reorder within `Jobs\`, and to move jobs between Tool groups (one drag implementation serves both — no move-up/down buttons needed)
-- [ ] First job auto-creates a default Tool group
-- [ ] Import SVG button (multi-select), Import Reference button, New Tool button
+
+- [x] Fixed top-level hierarchy: `Project > Jobs\ > Tool\ > Job > Tab`, plus `SVGs\ > SvgDoc > SvgPath`, `References\`
+- [x] Lock + eyeball toggles at every level, inherited down — and the toggle
+  writes the node's OWN flag, never the children's, so unhiding a folder brings
+  back exactly what was showing before
+- [x] Drag to reorder within `Jobs\`, and to move jobs between Tool groups. One
+  implementation, no move-up/down buttons
+- [x] **The drop target has no middle band.** The hierarchy is strictly layered,
+  so for any pair, dropping inside a row and dropping beside it are never both
+  legal — a row is a container for what you are dragging or a neighbour of it,
+  and the cursor cannot change which. Three zones would have been two dead bands
+  on every row. Container → inside; neighbour → an even split
+- [x] First job auto-creates a default Tool group, in ONE command, and selects
+  the JOB rather than the tool it had to make to hold it
+- [x] Import SVG button (multi-select), Import Reference button, New Tool button
 - [ ] **Multi-select in the outliner**, with the Inspector showing the shared fields
   of a mixed selection. Needed for the next item; identified as a gap during the
   Phase 1.3 lab review.
-- [ ] Rename in place; provenance label shown on jobs
+- [x] Rename in place (double-click or F2), Delete on the key or the toolbar
+- [x] **Two-line job rows.** The second line is the depth, always on screen —
+  Greg's call, and the right one: that line changing from "through 4.00mm" to
+  "13.00 left" across twelve jobs is the whole mechanism for noticing a change of
+  stock, and behind a tooltip it would only be found by someone who already
+  suspected. It is a COMPACT rendering built from the diagnostic's numbers, not
+  its sentence: the row is about 170px wide at the depth a job sits at, and the
+  full sentence arrives permanently ellipsised with the numbers as the part cut
+  off. The sentence is the row's tooltip
+- [x] Badges for warnings and errors. Info is never a badge — a fact is not
+  something to flag (D17)
+- [ ] Provenance label shown on jobs *(waits for Create Job from Path in 3.6 —
+  there is nothing to show provenance of until a job can be made from a path)*
 - [ ] Context menus (`@imengyu/vue3-context-menu` ships with `vue-win-mgr` already)
 
 ### 3.6 Inspector window

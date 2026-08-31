@@ -75,6 +75,11 @@ const OPEN_ONLY = Object.freeze([OpenMode.NORMAL, OpenMode.HEADING]);
  * @property {String} level - one of {@link Level}
  * @property {String} code - stable identifier, for tests and for filtering
  * @property {String} message - what to show the user
+ * @property {Object} [data] - the numbers behind the sentence, for a caller that
+ *   needs to say the same thing differently. The outliner does: a job row is
+ *   170 pixels wide and the full sentence does not fit in it, so it renders a
+ *   compact form of the same fact and keeps the sentence as the tooltip.
+ *   Reformatting a string would be parsing our own prose
  */
 
 
@@ -135,8 +140,10 @@ export function diagnose(project) {
 	 * @param {String} level - one of {@link Level}
 	 * @param {String} code - stable identifier
 	 * @param {String} message - what to show
+	 * @param {Object} [data] - the numbers behind it
 	 */
-	const say = (nodeId, level, code, message) => found.push({ nodeId, level, code, message });
+	const say = (nodeId, level, code, message, data) => found.push(
+		data === undefined ? { nodeId, level, code, message } : { nodeId, level, code, message, data });
 
 	if (root === undefined)
 		return [{ nodeId: document.root, level: Level.ERROR, code: 'no-project', message: 'The document has no project node.' }];
@@ -231,19 +238,28 @@ function describeDepth(say, job, j, p) {
 	const { depthClass, remaining, past } = classifyDepth(
 		j.cutDepth, p.materialThickness, p.cutThroughAllowance);
 
+	const data = {
+		depthClass,
+		remaining,
+		past,
+		cutDepth: j.cutDepth,
+		thickness: p.materialThickness,
+		into: j.cutDepth - p.materialThickness,
+	};
+
 	if (depthClass === DepthClass.GROOVE)
 		say(job.id, Level.INFO, 'depth-groove',
-			`Cuts ${mm(j.cutDepth)} of ${mm(p.materialThickness)} — ${mm(remaining)} left below.`);
+			`Cuts ${mm(j.cutDepth)} of ${mm(p.materialThickness)} — ${mm(remaining)} left below.`, data);
 
 	else if (depthClass === DepthClass.THROUGH)
 		say(job.id, Level.INFO, 'depth-through',
-			`Cuts through ${mm(p.materialThickness)} and ${mm(j.cutDepth - p.materialThickness)}`
-			+ ' into the spoilboard.');
+			`Cuts through ${mm(p.materialThickness)} and ${mm(data.into)}`
+			+ ' into the spoilboard.', data);
 
 	else
 		say(job.id, Level.WARNING, 'depth-beyond',
 			`Cuts ${mm(past)} deeper into the spoilboard than the ${mm(p.cutThroughAllowance)}`
-			+ ' allowance. Check the material thickness.');
+			+ ' allowance. Check the material thickness.', data);
 }
 
 
