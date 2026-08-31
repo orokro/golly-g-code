@@ -933,17 +933,47 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
 - [ ] Context menus (`@imengyu/vue3-context-menu` ships with `vue-win-mgr` already)
 
 ### 3.6 Inspector window
-- [ ] Scratch-built framework: group headers (full width) + two-column rows (label / control)
-- [ ] Control set: number+unit, slider+number, select, toggle, color, vector2, angle dial, text, read-only
-- [ ] Valibot validation, inline errors, blocked commit on invalid
-- [ ] Per-node-type layouts driven by the schemas from 3.3
-- [ ] Inherited-value visual state + reset button
-- [ ] Action buttons: **Create Job from Path**, **Use Path as Work Material**, **Add Tab**, **Calibrate Scale**, **Detach**, **Set Tool Width**
-- [ ] **Create Job from PathS** (multi-select) with a Combine mode — Union / Intersect /
-  Difference / XOR, the same set jscut offers. Union matters for real work: three
-  overlapping circles cut separately re-cut air where earlier circles already
-  cleared it. Combining must always be an explicit per-job choice; the importer
-  never merges shapes on its own.
+
+- [x] Scratch-built: group headers (sticky, full width) + two-column rows.
+  Scratch-built because the thing being edited is already described by a table
+  the application owns, and a form library would want it described again in its
+  own vocabulary
+- [x] Control set: number+unit, slider+number, select, toggle, vector2, text,
+  read-only, reference list (shown by NAME, since an id means nothing on screen).
+  *Colour: no field has that kind yet. Angle dial: deferred to Phase 4, where the
+  heading knob lives on the workspace and can be dragged against the actual path*
+- [x] Valibot validation, inline errors, blocked commit. Refused at the ROW, so
+  an invalid value never becomes a command — it never enters the undo stack and
+  so can never be reached again by undoing back through it
+- [x] Layouts driven by the field table, with a test asserting every field of
+  every type appears in exactly one group. Core says what a field IS; the
+  renderer says where it is DRAWN, and a field added to one and forgotten in the
+  other would otherwise simply be invisible
+- [x] Display units convert at the EDGE and nowhere else: a converted number
+  exists between the store and the input, never in between. The step converts
+  with the value, so an arrow key is a nudge in either unit rather than 0.1 inch
+- [x] Inherited-value state (the distinct colour) + a reset that DELETES the
+  node's value rather than writing today's inherited one in. Verified in the
+  browser: inherited 1000 → typed 650 → reset → inherited 1000 again, with the
+  reset button appearing and disappearing with the override
+- [x] **A selection is a list, always.** Several of one type show that type's
+  fields with disagreements marked MIXED; several types show only what they all
+  have. And a field one selected node inherits FROM another is left out — a Tool
+  and its own Job both have a `cutFeed`, and one control for the pair would
+  quietly give the job an override, so correcting the tool later would no longer
+  move it
+- [x] Fields that cannot apply right now are dimmed rather than hidden — a
+  control that vanishes is one you cannot find again
+- [x] Action buttons so far: **Create Job from Path(s)**, **Use as Work
+  Material**, **Add Tab**. *Calibrate Scale and Detach belong with reference
+  images in Phase 4, where there is something to drag pins onto; Set Tool Width
+  is a workspace gesture for the same reason*
+- [x] **Create Job from PathS** (multi-select). The Combine mode — Union /
+  Intersect / Difference / XOR — is a field ON the job rather than a choice at
+  creation time, which is better: it stays visible and changeable afterwards
+  instead of being a decision you made once in a dialog. Union matters for real
+  work: three overlapping circles cut separately re-cut air the earlier ones
+  already cleared. Still always explicit; the importer never merges on its own.
 
 ---
 
