@@ -65,6 +65,9 @@ import { availableWindows, windowSlugs } from './windows/registry.js';
 import { settingsSpec } from './settings/spec.js';
 import { createProjectStore } from './composables/projectStore.js';
 import { useProjectFile } from './composables/projectFile.js';
+import { useToolpaths } from './composables/useToolpaths.js';
+import { useProgram } from './composables/useProgram.js';
+import { useProgramFile } from './composables/programFile.js';
 import { defaultLayout } from './layout/defaultLayout.js';
 import { createLayoutStore } from './composables/layoutStore.js';
 import { createRenderDriver } from './composables/renderDriver.js';
@@ -88,6 +91,7 @@ const api = globalThis.gollyAPI ?? {
 	messageBox: async () => 2,
 	readBinary: async () => { throw new Error('This build has no access to the filesystem.'); },
 	writeBinary: async () => { throw new Error('This build has no access to the filesystem.'); },
+	writeText: async () => { throw new Error('This build has no access to the filesystem.'); },
 	onCloseRequested: () => () => {},
 	confirmClose: async () => false,
 };
@@ -105,6 +109,24 @@ provide('projectStore', store);
 /** New, Open, Save, and the unsaved-changes guard they all go through. */
 const file = useProjectFile({ store, api });
 provide('projectFile', file);
+
+/**
+ * The toolpaths, and the program built from them.
+ *
+ * Created HERE rather than inside each window, because two windows asking for
+ * the same thing should not be two generations of it — the Workspace draws the
+ * toolpaths and the G-code window emits from them, and before this the second
+ * one to mount simply ran the whole pipeline again. Providing them also gives
+ * the per-job cache in 5.2 one place to live.
+ */
+const toolpaths = useToolpaths({ store });
+provide('toolpaths', toolpaths);
+
+const program = useProgram({ store, toolpaths: toolpaths.toolpaths, state: toolpaths.state });
+provide('program', program);
+
+/** Export to `.nc`. Provided so the G-code window's toolbar is a thin button. */
+provide('programFile', useProgramFile({ store, program, api }));
 
 /** @type {Function|null} Stops listening for close requests. */
 let unlistenClose = null;
@@ -148,8 +170,8 @@ provide('palette', palette);
 /** What the status bar says on the left. */
 const hint = ref('');
 
-/** What codegen is doing. Wired to the real pipeline in Phase 3. */
-const codegenState = ref('idle');
+/** What codegen is doing, for the status bar. Now the real pipeline. */
+const codegenState = computed(() => program.state.value);
 
 /** Remembers where the user put their windows. */
 const layoutStore = createLayoutStore({ knownSlugs: windowSlugs });

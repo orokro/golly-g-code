@@ -139,8 +139,14 @@ const showGrid = computed(() => settings?.showGrid !== false);
 const transform = computed(() => viewTransform(view.value));
 const selectedIds = computed(() => store.selection.value.ids);
 
-/** The toolpaths, regenerated when the document settles. */
-const { toolpaths } = useToolpaths({ store });
+/**
+ * The toolpaths, regenerated when the document settles.
+ *
+ * Injected, because the app makes one set for everybody. The fallback is not
+ * defensive padding: this window is mounted on its own in tests and in the
+ * browser verification harness, where there is no App above it to provide one.
+ */
+const { toolpaths } = inject('toolpaths', null) ?? useToolpaths({ store });
 
 /** The bed, from the project's own settings. */
 const machine = computed(() => {

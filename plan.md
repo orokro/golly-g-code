@@ -1100,16 +1100,59 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
 - [x] Line ↔ job mapping, read back out of the `;<job name id>` breadcrumbs
   rather than counted while emitting, so the map cannot drift from the file
 
-### 5.2 The G-code window
+### 5.2 The G-code window — done, except Monaco
 
+- [x] **The staleness contract, which is the reason `useProgram` is not a
+  computed.** Generating is cheap; what cannot be a computed is the promise
+  Export has to make — *the file you save is the project you are looking at*.
+  Between a keystroke and the regeneration after it there is a window, small and
+  easy to hit by typing and reaching for the toolbar, where the text on screen
+  describes a document that no longer exists. So: idle / queued / generating /
+  failed, `stale` is everything but idle, and Export is gated on it
+- [x] Export also refuses if the project changed while the native save dialog sat
+  open — the text captured when the button was pressed is the text the user
+  meant, and writing it under a name chosen a minute later is the worst of both
+- [x] A thrown generator DROPS the old text rather than leaving it on screen. The
+  one thing worse than no G-code is G-code for a part that is no longer the one
+  in front of you
+- [x] Toolpaths are generated once, in `App.vue`, and provided. Two windows
+  asking for the same thing was two generations of it. That is also where the
+  per-job cache below will live
+- [x] **A virtual list, not a `<pre>`.** A gutter and a highlighted job each need
+  a box per line, and a sheet of parts is tens of thousands of them. Only the
+  visible slice exists in the DOM. Measured in a browser: 1142 lines, a 20,556px
+  spacer, 52 rows rendered, and zero pixels of drift at a scroll position that is
+  not a multiple of the line height
+- [x] Selecting a job in the outliner highlights its block and scrolls to it —
+  only when it is off screen, and a third of the way down rather than at the very
+  top, because the line above a job's first move is the comment naming it
+- [x] Read-only, deliberately. The program is a VIEW of the document; anything
+  typed here would be overwritten by the next keystroke in the Inspector. The
+  "Edit G-code" toggle that suspends regeneration is a real feature and a
+  separate one — an editable box that silently discards what you type is worse
+  than a read-only one
+- [x] Export to `.nc` through the Electron dialog, with the project's name
+  offered and the characters a filesystem would refuse stripped out
+- [x] Found by looking at it: scrolled past the end — which happens for a frame
+  every time a long program regenerates into a short one — `start` ran past `end`
+  and the window rendered blank, with no error anywhere
+- [x] Found by looking at it: "up to date · 0 lines" beside "this project cannot
+  be cut yet". True, contradictory, and how a status line stops being believed
+
+- [ ] Monaco, **lazy-loaded on first open of the Code window** — several MB of JS
+  to parse, so not at boot. It replaces the middle of the window and nothing else
+- [ ] G-code language: Monarch tokenizer, hover info, bracket-matching on the
+  `;<job>` breadcrumbs
+- [ ] **Read-only by default**, with an explicit "Edit G-code" toggle that
+  suspends auto-regen
 - [ ] Move `cam-core` into a Web Worker with `AbortController`-style cancellation
 - [ ] **Per-job G-code cache**, invalidated per node — regenerate only the changed job's block and re-splice
 - [ ] Debounce driven by command commits (already free from 3.1)
-- [ ] Staleness contract: status bar shows idle / queued / generating / **stale**; Export is blocked until current
-- [ ] Monaco, **lazy-loaded on first open of the Code window** (it's several MB of JS to parse — don't pay it at boot). ESM entry + Vite `?worker` wiring, *not* the CDN AMD loader NCviewer uses
-- [ ] G-code language: Monarch tokenizer (G/M codes, axis words, parameters, comments), hover info for common codes, bracket-matching on `;<job>` breadcrumbs
-- [ ] **Read-only by default**, with an explicit "Edit G-code" toggle that suspends auto-regen — otherwise hand-editing and live regen fight and the user loses work
-- [ ] Export button in the window's toolbar → `.nc`/`.gcode` via Electron dialog
+- [x] Staleness contract: status bar shows idle / queued / generating / **stale**; Export is blocked until current *(done in 5.2)*
+
+
+
+
 - [x] Line ↔ job mapping from the breadcrumb comments *(done in 5.1)*
 
 ### ▶ MVP LINE — everything above this can cut real material ◀
