@@ -107,6 +107,35 @@ function number(value) {
 }
 
 
+/**
+ * Builds the `d` attribute for a run of points.
+ *
+ * For a TOOLPATH rather than for the drawing. A toolpath is already flat — it
+ * came out of Clipper as points — so there is nothing to preserve as a curve and
+ * nothing to flatten.
+ *
+ * @param {Object} run - `{ points, closed }` from `core/cam`
+ * @returns {String} an SVG path data string, empty when there is nothing to draw
+ */
+export function polylineData(run) {
+
+	const points = run?.points ?? [];
+
+	if (points.length === 0)
+		return '';
+
+	const out = [`M${number(points[0][0])} ${number(points[0][1])}`];
+
+	for (const point of points.slice(1))
+		out.push(`L${number(point[0])} ${number(point[1])}`);
+
+	if (run.closed)
+		out.push('Z');
+
+	return out.join('');
+}
+
+
 // Bounds live in core now: four things need them and they are not all UI --
 // zoom to fit here, the 2D preview's real-unit sizing, the 3D stock block, and
 // telling the user how big an imported drawing came out. Re-exported so this

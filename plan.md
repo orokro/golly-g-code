@@ -1027,6 +1027,33 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
 
 ## Phase 5 — Codegen wiring + Code editor
 
+### 5.0 The toolpath pipeline — done
+
+- [x] `core/project/toolpaths.js` is the seam between the document, which knows
+  what the user asked for, and `core/cam`, which has known how to do it since
+  Phase 1 and had nothing calling it. Deliberately thin: anything hard appearing
+  here is a sign it belongs over in `cam` instead
+- [x] **Closed and open runs, in one job.** Split per SUBPATH using each
+  subpath's own closed flag, not the node's aggregate — a shape holding a square
+  and a loose line has a ring worth offsetting and a run worth tracing, and the
+  aggregate says only that it is not entirely closed. Closed runs still travel
+  together into `generateToolpath`, because which contour is a hole is a property
+  of the SET
+- [x] A shape the operation cannot apply to is REPORTED, never skipped. A job
+  that emitted three of its four paths and said nothing is what rule 5 is for
+- [x] Combine — union, intersect, difference, xor — as an explicit per-job
+  choice. Verified: two overlapping 40mm squares union to one contour
+- [x] Measured against real geometry rather than against itself: a 40mm square
+  cut outside with a 3.175mm bit is 43.175mm across, inside is 36.825mm, centre
+  is 40mm, and a 2mm margin adds 4mm to the outside cut
+- [x] `useToolpaths` regenerates on command commits, debounced — coalescing makes
+  a drag one undo entry but it still publishes on every step, and regenerating
+  forty times to show the fortieth is work nobody sees. **Async on the outside,
+  synchronous inside**, so the worker below slots in without touching a caller
+- [x] The workspace draws every operation now: the kerf band at the tool's real
+  width over the real toolpath, with a dashed centreline showing where the bit's
+  centre goes
+
 - [ ] Move `cam-core` into a Web Worker with `AbortController`-style cancellation
 - [ ] **Per-job G-code cache**, invalidated per node — regenerate only the changed job's block and re-splice
 - [ ] Debounce driven by command commits (already free from 3.1)

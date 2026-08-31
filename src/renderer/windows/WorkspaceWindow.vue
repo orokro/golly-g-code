@@ -49,6 +49,10 @@
 					fill="none" :stroke-width="cut.width" stroke="var(--gg-cut)"
 					stroke-linecap="round" stroke-linejoin="round"/>
 
+				<!-- the toolpath itself: where the CENTRE of the bit goes -->
+				<path v-for="cut in kerfs" :key="`c${cut.id}`" class="centreline" :d="cut.d"
+					fill="none" stroke-width="1" vector-effect="non-scaling-stroke"/>
+
 				<!-- the drawing itself, a hairline at any zoom -->
 				<path v-for="shape in shapes" :key="shape.id" class="shape" :d="shape.d"
 					:class="{ selected: selectedIds.includes(shape.id) }"
@@ -88,11 +92,12 @@
 import { ref, shallowRef, computed, inject, watch } from 'vue';
 
 import { NodeType } from '@core/project/nodes.js';
-import { isVisible, isLocked, cuttingOrder } from '@core/project/tree.js';
+import { isVisible, isLocked } from '@core/project/tree.js';
 import { resolvedValues } from '@core/project/inherit.js';
 
 import { useResize } from '../composables/useResize.js';
-import { pathData, boundsOf, unionBounds, padBounds } from './workspace/geometry.js';
+import { useToolpaths } from '../composables/useToolpaths.js';
+import { pathData, polylineData, boundsOf, unionBounds, padBounds } from './workspace/geometry.js';
 import {
 	createView, viewTransform, toWorld, panBy, zoomAt, fitBounds, gridSpacing,
 } from './workspace/view.js';
@@ -133,6 +138,9 @@ const showGrid = computed(() => settings?.showGrid !== false);
 
 const transform = computed(() => viewTransform(view.value));
 const selectedIds = computed(() => store.selection.value.ids);
+
+/** The toolpaths, regenerated when the document settles. */
+const { toolpaths } = useToolpaths({ store });
 
 /** The bed, from the project's own settings. */
 const machine = computed(() => {
@@ -182,38 +190,31 @@ const shapes = computed(() => {
 /**
  * The kerf for every job, at its tool's real width.
  *
- * Only the centre operation so far, where the kerf IS the source path stroked at
- * the tool's diameter — which is exactly what the browser's round-capped,
- * round-joined stroke draws, for free and at any zoom. The offset operations
- * need the real toolpath from `core/cam`, which arrives with the codegen wiring
- * in Phase 5; drawing an offset as if it were a centre cut would be a picture of
- * a cut nobody asked for, so they are left out until then rather than faked.
+ * Every operation now, not just centre: the toolpath comes from `core/cam`
+ * through `useToolpaths`, so an inside cut is drawn where an inside cut actually
+ * goes. The band is the toolpath stroked at the tool's diameter with round caps
+ * and joins, which is exactly the material a round cutter removes travelling
+ * along it — the browser draws that for free and correctly at any zoom.
+ *
+ * Drawn from POINTS rather than from the source's `d`, because a toolpath is
+ * not the drawing: it is the drawing offset, cut into passes and rearranged, and
+ * the whole point of showing it is that it differs.
  */
 const kerfs = computed(() => {
 
-	store.revision.value;
-
 	const found = [];
 
-	for (const { tool, job } of cuttingOrder(store.document)) {
+	for (const entry of toolpaths.value) {
 
-		if (isVisible(store.document, job.id) === false)
+		if (isVisible(store.document, entry.jobId) === false)
 			continue;
 
-		const values = resolvedValues(store.document, job.id);
+		const width = store.document.nodes[entry.toolId]?.diameter
+			?? resolvedValues(store.document, entry.toolId).diameter;
 
-		if (values.operation !== 'center')
-			continue;
-
-		const width = resolvedValues(store.document, tool.id).diameter;
-
-		for (const pathId of values.paths) {
-
-			const geometry = store.project.geometry[store.document.nodes[pathId]?.geometry];
-
-			if (geometry !== undefined)
-				found.push({ id: `${job.id}-${pathId}`, d: pathData(geometry.subPaths), width });
-		}
+		entry.paths.forEach((path, index) => {
+			found.push({ id: `${entry.jobId}-${index}`, d: polylineData(path), width });
+		});
 	}
 
 	return found;
@@ -400,6 +401,15 @@ defineExpose({ view, zoomToFit, toWorld: (x, y) => toWorld(view.value, x, y) });
 
 	.shape {
 		stroke: var(--gg-text-muted);
+		pointer-events: none;
+	}
+
+	/* where the centre of the bit goes. Dashed, so it reads as a path rather
+	   than as another edge of the drawing */
+	.centreline {
+		stroke: var(--gg-cut);
+		stroke-dasharray: 4 3;
+		opacity: 0.9;
 		pointer-events: none;
 	}
 
