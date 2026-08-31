@@ -38,10 +38,9 @@
  */
 
 import { emitProgram } from '../post/program.js';
-import { arcLengths, pointAt, projectOnto, placeTabs, planPass } from '../cam/tabs.js';
+import { planPass } from '../cam/tabs.js';
 import { leadIn, leadOut } from '../cam/entry.js';
-import { NodeType } from './nodes.js';
-import { childrenOf, cuttingOrder } from './tree.js';
+import { cuttingOrder } from './tree.js';
 import { resolvedValues } from './inherit.js';
 import { generateAll } from './toolpaths.js';
 import { diagnose, blocksExport, Level } from './diagnostics.js';
@@ -71,6 +70,8 @@ const TOP_Z = 0;
  *   inclusive and zero based, for mapping the editor back to the outliner
  * @property {Array<Object>} blocked - the error diagnostics that stopped it,
  *   empty when a program was produced
+ * @property {Array<Object>} travel - `{ jobId, z, from, to }` per rapid across
+ *   the work, in WORKSPACE millimetres so the view can draw them directly
  */
 
 
@@ -101,6 +102,19 @@ export function buildPlan(project, options = {}) {
 
 	/** @type {Array<Object>} */
 	const jobs = [];
+
+	/** @type {Array<Object>} the rapids between cuts, in workspace millimetres */
+	const travel = [];
+
+	/**
+	 * Where the tool was left by the previous cut, carried ACROSS jobs.
+	 *
+	 * Resetting this per job dropped the rapid from the end of one job to the
+	 * start of the next — which is the longest travel in most programs and the
+	 * one that actually changes when you reorder the jobs, so a layer without it
+	 * answers the question it exists to answer with a blank.
+	 */
+	let at = null;
 
 	/** @type {Map<String, Number>} tool node id to the T number it gets */
 	const numbers = new Map();
@@ -133,13 +147,22 @@ export function buildPlan(project, options = {}) {
 			warnings.push(`${job.name}: dogbones are switched on, but nothing implements them yet,`
 				+ ' so the inside corners were left square.');
 
-		const placed = placeJobTabs(document, job, toolpath, t.diameter / 2);
-		warnings.push(...placed.warnings.map((w) => `${job.name}: ${w}`));
-
 		const passes = toolpath.depths.map((z) => ({
 			z,
-			runs: cutsForPass(toolpath.paths, placed.spans, z, j, zero),
+			runs: cutsForPass(toolpath.paths, toolpath.tabSpans, z, j),
 		}));
+
+		// The travel is recorded in WORKSPACE coordinates, before the work zero is
+		// taken off, because the workspace is where it gets drawn. Derived from the
+		// runs the emitter will actually be handed rather than re-deriving the
+		// "up, across, down between every run" rule in the renderer -- two copies
+		// of an ordering rule is two copies that drift.
+		at = travelBetween(passes, job.id, at, travel);
+
+		for (const pass of passes)
+			pass.runs = pass.runs.map((run) => ({
+				points: run.points.map(([x, y]) => [x - zero.x, y - zero.y]),
+			}));
 
 		jobs.push({
 			id: job.id,
@@ -160,7 +183,7 @@ export function buildPlan(project, options = {}) {
 		jobs,
 	};
 
-	return { plan, warnings };
+	return { plan, warnings, travel };
 }
 
 
@@ -188,11 +211,11 @@ export function generateProgram(project, options = {}) {
 
 	if (blocksExport(found))
 		return {
-			text: '', lines: [], stats: null, blocks: [], blocked,
+			text: '', lines: [], stats: null, blocks: [], blocked, travel: [],
 			warnings: blocked.map((d) => d.message),
 		};
 
-	const { plan, warnings } = buildPlan(project, options);
+	const { plan, warnings, travel } = buildPlan(project, options);
 	const p = resolvedValues(project.document, project.document.root);
 
 	const { lines, warnings: emitted, stats } = emitProgram(plan, {
@@ -208,6 +231,7 @@ export function generateProgram(project, options = {}) {
 		stats,
 		blocks: mapBlocks(lines),
 		blocked: [],
+		travel,
 	};
 }
 
@@ -249,183 +273,63 @@ export function mapBlocks(lines) {
 
 
 /**
- * Places a job's tabs onto its toolpath runs.
- *
- * A tab's position is an arc length along the job's source, and a job may hold
- * more than one source run, so the source runs are treated as one length laid
- * end to end: a position of 250 on two 200mm outlines is 50mm into the second.
- * That matches how the number is arrived at by dragging, and it means the
- * outlines can be reordered without a tab silently landing somewhere else.
- *
- * @param {Object} document - the project document
- * @param {Object} job - the job node
- * @param {Object} toolpath - its entry from `generateAll`
- * @param {Number} toolRadius - the cutter radius, for the too-narrow warning
- * @returns {Object} `{ spans, warnings }` — spans is one array per toolpath run
- */
-function placeJobTabs(document, job, toolpath, toolRadius) {
-
-	/** @type {Array<Array<Object>>} */
-	const spans = toolpath.paths.map(() => []);
-
-	/** @type {String[]} */
-	const warnings = [];
-
-	const tabs = childrenOf(document, job.id)
-		.filter((node) => node.type === NodeType.TAB)
-		.map((node) => resolvedValues(document, node.id));
-
-	const sources = toolpath.source.filter((run) => run.points.length > 1);
-
-	if (tabs.length === 0)
-		return { spans, warnings };
-
-	if (sources.length === 0) {
-		warnings.push(`there is nothing for its ${tabs.length} tab(s) to be anchored to`);
-		return { spans, warnings };
-	}
-
-	const totals = sources.map((run) => arcLengths(run.points).at(-1));
-
-	/** @type {Map<String, Object>} tabs batched by which source and which run */
-	const groups = new Map();
-
-	for (const tab of tabs) {
-
-		const home = homeOf(totals, tab.position);
-		const source = sources[home.index].points;
-		const nearest = nearestRun(toolpath.paths, pointAt(source, home.along));
-		const key = `${home.index}:${nearest}`;
-
-		if (!groups.has(key))
-			groups.set(key, { source, run: nearest, tabs: [] });
-
-		groups.get(key).tabs.push({ ...tab, position: home.along });
-	}
-
-	for (const group of groups.values()) {
-
-		const result = placeTabs(group.source, toolpath.paths[group.run].points, group.tabs, {
-			toolRadius,
-			congruent: toolpath.congruent,
-		});
-
-		spans[group.run].push(...result.spans);
-		warnings.push(...result.warnings);
-	}
-
-	return { spans: spans.map(mergeSpans), warnings };
-}
-
-
-/**
- * Which source run a position falls in, and how far along that one it is.
- *
- * Past the end of the last run it stays on the last run and past its end, which
- * `placeTabs` reports and clamps — better than wrapping round to the start,
- * where a tab would appear somewhere nobody put it.
- *
- * @param {Number[]} totals - the length of each source run
- * @param {Number} position - arc length across all of them, millimetres
- * @returns {Object} `{ index, along }`
- */
-function homeOf(totals, position) {
-
-	let along = position;
-
-	for (let index = 0; index < totals.length - 1; index++) {
-
-		if (along <= totals[index])
-			return { index, along };
-
-		along -= totals[index];
-	}
-
-	return { index: totals.length - 1, along };
-}
-
-
-/**
- * Which toolpath run passes closest to a point.
- *
- * @param {Array<Object>} runs - the toolpath runs
- * @param {Number[]} point - the point on the source
- * @returns {Number} the index of the nearest run
- */
-function nearestRun(runs, point) {
-
-	let best = 0;
-	let distance = Infinity;
-
-	runs.forEach((run, index) => {
-
-		const found = projectOnto(run.points, point);
-
-		if (found.offset < distance) {
-			distance = found.offset;
-			best = index;
-		}
-	});
-
-	return best;
-}
-
-
-/**
- * Sorts and merges overlapping spans.
- *
- * `placeTabs` already merges within one call, but a job can produce several
- * calls — different source runs landing on the same toolpath run — and two
- * bridges sharing material are still one bridge.
- *
- * @param {Array<Object>} spans - `{ start, end, depth }` along one toolpath run
- * @returns {Array<Object>} sorted, non-overlapping
- */
-function mergeSpans(spans) {
-
-	const sorted = [...spans].sort((a, b) => a.start - b.start);
-
-	/** @type {Array<Object>} */
-	const merged = [];
-
-	for (const span of sorted) {
-
-		const last = merged[merged.length - 1];
-
-		if (last !== undefined && span.start <= last.end) {
-			last.end = Math.max(last.end, span.end);
-			last.depth = Math.min(last.depth, span.depth);
-		}
-		else {
-			merged.push({ ...span });
-		}
-	}
-
-	return merged;
-}
-
-
-/**
  * The runs actually cut on one depth pass, across all of a job's contours.
  *
  * @param {Array<Object>} paths - the job's toolpath runs
  * @param {Array<Array<Object>>} spans - the tab spans, one array per run
  * @param {Number} z - the depth of this pass
  * @param {Object} j - the job's resolved values
- * @param {Object} zero - the work zero to rebase on
- * @returns {Array<Object>} `{ points }` in travel order
+ * @returns {Array<Object>} `{ points }` in travel order, in workspace millimetres
  */
-function cutsForPass(paths, spans, z, j, zero) {
+function cutsForPass(paths, spans, z, j) {
 
 	/** @type {Array<Object>} */
 	const runs = [];
 
 	paths.forEach((path, index) => {
-		for (const cut of withLeads(planPass(path.points, spans[index], z, { topZ: TOP_Z }), j))
-			runs.push({ points: cut.map(([x, y]) => [x - zero.x, y - zero.y]) });
+		for (const cut of withLeads(planPass(path.points, spans?.[index] ?? [], z, { topZ: TOP_Z }), j))
+			runs.push({ points: cut });
 	});
 
 	return runs;
+}
+
+
+/**
+ * The rapids between one cut and the next.
+ *
+ * Every gap between two runs is the same three moves — up to safe Z, across,
+ * back down — so what is worth drawing is the ACROSS: the straight line in XY
+ * from where one cut stopped to where the next one starts. That line is the
+ * whole reason the layer exists. Reorder the jobs and it moves; that is what
+ * Greg wanted to be able to see rather than argue about.
+ *
+ * @param {Array<Object>} passes - the job's passes, in workspace coordinates
+ * @param {String} jobId - the job they belong to, so the layer can be filtered
+ * @param {Number[]|null} from - where the previous job left the tool
+ * @param {Array<Object>} moves - collected here, as `{ jobId, z, from, to }`
+ * @returns {Number[]|null} where this job leaves the tool
+ */
+function travelBetween(passes, jobId, from, moves) {
+
+	/** @type {Number[]|null} where the previous cut ended */
+	let at = from;
+
+	for (const pass of passes)
+		for (const run of pass.runs) {
+
+			const points = run.points;
+
+			if (points.length < 2)
+				continue;
+
+			if (at !== null && (at[0] !== points[0][0] || at[1] !== points[0][1]))
+				moves.push({ jobId, z: pass.z, from: at, to: points[0] });
+
+			at = points[points.length - 1];
+		}
+
+	return at;
 }
 
 

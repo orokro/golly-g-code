@@ -268,3 +268,64 @@ describe('the whole project', () => {
 		expect(() => generateAll(f.project)).not.toThrow();
 	});
 });
+
+
+describe('holding tabs ride along with the toolpath', () => {
+
+	/**
+	 * The fixture's job, with tabs hung under it.
+	 *
+	 * @param {Array<Object>} tabs - fields for each tab
+	 * @param {Object} [job] - fields for the job
+	 * @returns {Object} the fixture
+	 */
+	const withTabs = (tabs, job = {}) => {
+		const newId = counter('t');
+		const f = fixture({ operation: 'outside', cutDepth: 2, ...job });
+		const node = f.project.document.nodes[f.jobId];
+		node.children = tabs.map((fields) => {
+			const tab = createNode(NodeType.TAB, { name: 'Tab', ...fields }, { newId });
+			f.project.document.nodes[tab.id] = tab;
+			return tab.id;
+		});
+		return f;
+	};
+
+	it('resolves a tab onto the run it actually sits on', () => {
+		const f = withTabs([{ position: 20, length: 6, depth: 1 }]);
+		const result = generateJobToolpath(f.project, f.jobId);
+
+		expect(result.tabSpans).toHaveLength(result.paths.length);
+		expect(result.tabSpans.flat()).toHaveLength(1);
+		expect(result.tabSpans.flat()[0].end - result.tabSpans.flat()[0].start).toBeCloseTo(6, 1);
+	});
+
+	it('gives every run an entry, even the ones with no tab on them', () => {
+		// the emitter indexes tabSpans by run, so a short array is an off-by-one
+		// waiting to happen rather than an absence
+		const f = withTabs([]);
+		const result = generateJobToolpath(f.project, f.jobId);
+		expect(result.tabSpans).toHaveLength(result.paths.length);
+		expect(result.tabSpans.every(Array.isArray)).toBe(true);
+	});
+
+	it('merges two tabs that share material into one bridge', () => {
+		const f = withTabs([
+			{ position: 20, length: 8, depth: 1 },
+			{ position: 23, length: 8, depth: 1 },
+		]);
+		const result = generateJobToolpath(f.project, f.jobId);
+		expect(result.tabSpans.flat()).toHaveLength(1);
+	});
+
+	it('says so when a tab is narrower than the cutter', () => {
+		const f = withTabs([{ position: 20, length: 1, depth: 1 }]);
+		const result = generateJobToolpath(f.project, f.jobId);
+		expect(result.warnings.join(' ')).toMatch(/not wider than/);
+	});
+
+	it('is empty, not missing, when the job could not be cut at all', () => {
+		const f = withTabs([{ position: 20, length: 6, depth: 1 }], { cutDepth: 0 });
+		expect(generateJobToolpath(f.project, f.jobId).tabSpans).toEqual([]);
+	});
+});

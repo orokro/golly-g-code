@@ -63,6 +63,25 @@ export const settingsSpec = Object.freeze({
 			default: true,
 		},
 
+		showTravel: {
+			name: 'Show travel moves',
+			desc: 'The rapids between cuts — the lifts and crossings the machine makes'
+				+ ' getting from one cut to the next. The only way to SEE what the'
+				+ ' cutting order costs you rather than argue about it. Turn it off'
+				+ ' when it clutters.',
+			cats: ['display'],
+			type: TYPES.Boolean,
+			default: true,
+		},
+
+		showTabs: {
+			name: 'Show holding tabs',
+			desc: 'The bridges of material left uncut so a part does not come loose.',
+			cats: ['display'],
+			type: TYPES.Boolean,
+			default: true,
+		},
+
 		gridSpacing: {
 			name: 'Grid spacing (mm)',
 			desc: 'Distance between minor grid lines.',
@@ -70,14 +89,6 @@ export const settingsSpec = Object.freeze({
 			type: TYPES.Number,
 			default: 10,
 			opts: { min: 0.1, max: 100, step: 0.1 },
-		},
-
-		showTravel: {
-			name: 'Show travel moves',
-			desc: 'Draw the lifts and rapids between cuts, not just the cutting.',
-			cats: ['display'],
-			type: TYPES.Boolean,
-			default: true,
 		},
 
 		decimals: {

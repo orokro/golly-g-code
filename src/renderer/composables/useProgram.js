@@ -52,8 +52,8 @@ export { State };
  * @param {import('vue').ShallowRef} [options.state] - the toolpath generator's
  *   state, so this one can report `queued` while that one is still settling
  * @param {Function} [options.generate] - the generator, injectable for tests
- * @returns {Object} `{ text, lines, blocks, warnings, blocked, stats, state,
- *   stale, canExport, regenerate }`
+ * @returns {Object} `{ text, lines, blocks, warnings, blocked, stats, travel,
+ *   state, stale, canExport, regenerate }`
  */
 export function useProgram(options) {
 
@@ -79,6 +79,17 @@ export function useProgram(options) {
 
 	/** Move counts, for the status bar. */
 	const stats = shallowRef(null);
+
+	/**
+	 * The rapids between cuts, in workspace millimetres.
+	 *
+	 * Carried here rather than recomputed in the view, because the whole value of
+	 * the travel layer is that it is what the machine will actually do — a
+	 * second derivation of the ordering rule is a second one that can drift.
+	 *
+	 * @type {import('vue').ShallowRef<Object[]>}
+	 */
+	const travel = shallowRef([]);
 
 	/** What this generator is doing, ignoring the one upstream. */
 	const own = shallowRef(State.IDLE);
@@ -126,6 +137,7 @@ export function useProgram(options) {
 			warnings.value = result.warnings;
 			blocked.value = result.blocked;
 			stats.value = result.stats;
+			travel.value = result.travel ?? [];
 			own.value = State.IDLE;
 
 			return result.text;
@@ -141,6 +153,7 @@ export function useProgram(options) {
 			warnings.value = [error.message];
 			blocked.value = [];
 			stats.value = null;
+			travel.value = [];
 			own.value = State.FAILED;
 
 			return '';
@@ -150,7 +163,7 @@ export function useProgram(options) {
 	watch(toolpaths, regenerate, { immediate: true });
 
 	return {
-		text, lines, blocks, warnings, blocked, stats,
+		text, lines, blocks, warnings, blocked, stats, travel,
 		state, stale, canExport, regenerate,
 	};
 }

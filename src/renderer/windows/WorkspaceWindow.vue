@@ -33,6 +33,18 @@
 					<path :d="`M${cell} 0 L0 0 0 ${cell}`" fill="none"
 						stroke="var(--gg-border)" stroke-width="1"/>
 				</pattern>
+
+				<!--
+					The tab hatch is in USER space, so it scales with the drawing like
+					the kerf does. A tab is a physical bridge of material and the hatch
+					reads as its texture; a screen-space hatch would look like a UI
+					decoration laid over the part.
+				-->
+				<pattern :id="hatchId" width="1.6" height="1.6" patternUnits="userSpaceOnUse"
+					patternTransform="rotate(45)">
+					<rect width="1.6" height="1.6" fill="var(--gg-surface)" fill-opacity="0.35"/>
+					<path d="M0 0 V1.6" stroke="var(--gg-warning, #d8a657)" stroke-width="0.5"/>
+				</pattern>
 			</defs>
 
 			<rect v-if="showGrid" class="grid" width="100%" height="100%" :fill="`url(#${gridId})`"/>
@@ -52,6 +64,25 @@
 				<!-- the toolpath itself: where the CENTRE of the bit goes -->
 				<path v-for="cut in kerfs" :key="`c${cut.id}`" class="centreline" :d="cut.d"
 					fill="none" stroke-width="1" vector-effect="non-scaling-stroke"/>
+
+				<!--
+					The tabs: what the cut does NOT remove. Drawn at the cutter's full
+					width like the kerf, because the question being asked is "is this
+					bridge wide enough to hold", not "is a tab here".
+				-->
+				<path v-for="tab in tabs" :key="`t${tab.id}`" class="tab" :d="tab.d"
+					fill="none" :stroke-width="tab.width" :stroke="`url(#${hatchId})`"
+					stroke-linecap="butt"/>
+
+				<!--
+					The travel: the rapids between cuts. Greg's ask — see what the
+					cutting order costs rather than argue about it.
+				-->
+				<g v-if="showTravel" class="travel">
+					<line v-for="move in travel" :key="move.id"
+						:x1="move.from[0]" :y1="move.from[1]" :x2="move.to[0]" :y2="move.to[1]"
+						stroke-width="1" vector-effect="non-scaling-stroke"/>
+				</g>
 
 				<!-- the drawing itself, a hairline at any zoom -->
 				<path v-for="shape in shapes" :key="shape.id" class="shape" :d="shape.d"
@@ -75,7 +106,8 @@
 			</g>
 
 			<text class="scaleLabel" x="8" :y="height - 8">
-				{{ cellLabel }} grid · {{ Math.round(view.scale * 100) }}%
+				{{ cellLabel }} grid · {{ Math.round(view.scale * 100) }}%<tspan
+					v-if="showTravel"> · {{ Math.round(travelMm) }}mm of travel</tspan>
 			</text>
 
 		</svg>
@@ -98,6 +130,7 @@ import { resolvedValues } from '@core/project/inherit.js';
 import { useResize } from '../composables/useResize.js';
 import { useToolpaths } from '../composables/useToolpaths.js';
 import { pathData, polylineData, boundsOf, unionBounds, padBounds } from './workspace/geometry.js';
+import { tabBands, travelSegments, travelDistance } from './workspace/layers.js';
 import {
 	createView, viewTransform, toWorld, panBy, zoomAt, fitBounds, gridSpacing,
 } from './workspace/view.js';
@@ -120,6 +153,9 @@ const view = shallowRef(createView());
 /** Unique per instance, so two Workspace windows do not share one pattern. */
 const gridId = `grid-${Math.random().toString(36).slice(2, 9)}`;
 
+/** Likewise for the tab hatch. */
+const hatchId = `hatch-${Math.random().toString(36).slice(2, 9)}`;
+
 /**
  * The window's size in CSS pixels.
  *
@@ -135,9 +171,14 @@ useResize(body, (measured) => { size.value = measured; });
 
 const height = computed(() => size.value.height || 0);
 const showGrid = computed(() => settings?.showGrid !== false);
+const showTravel = computed(() => settings?.showTravel !== false);
+const showTabs = computed(() => settings?.showTabs !== false);
 
 const transform = computed(() => viewTransform(view.value));
 const selectedIds = computed(() => store.selection.value.ids);
+
+/** The emitted program, for its travel moves. Absent when mounted alone. */
+const program = inject('program', null);
 
 /**
  * The toolpaths, regenerated when the document settles.
@@ -215,8 +256,7 @@ const kerfs = computed(() => {
 		if (isVisible(store.document, entry.jobId) === false)
 			continue;
 
-		const width = store.document.nodes[entry.toolId]?.diameter
-			?? resolvedValues(store.document, entry.toolId).diameter;
+		const width = widthOf(entry);
 
 		entry.paths.forEach((path, index) => {
 			found.push({ id: `${entry.jobId}-${index}`, d: polylineData(path), width });
@@ -225,6 +265,43 @@ const kerfs = computed(() => {
 
 	return found;
 });
+
+/**
+ * The cutter diameter for a toolpath entry.
+ *
+ * The node's own value if it has one, the resolved value otherwise — the same
+ * two-step the kerf already did, in one place now that two layers want it.
+ *
+ * @param {Object} entry - a toolpath entry
+ * @returns {Number} the diameter in millimetres
+ */
+const widthOf = (entry) => store.document.nodes[entry.toolId]?.diameter
+	?? resolvedValues(store.document, entry.toolId).diameter;
+
+/**
+ * Whether a job is drawn at all.
+ *
+ * @param {String} jobId - the job
+ * @returns {Boolean} true when it is visible
+ */
+const drawn = (jobId) => isVisible(store.document, jobId) !== false;
+
+/** The holding tabs, as bands on the toolpath. */
+const tabs = computed(() => {
+
+	if (!showTabs.value)
+		return [];
+
+	return tabBands(toolpaths.value, widthOf, drawn)
+		.map((band) => ({ ...band, d: polylineData({ points: band.points }) }));
+});
+
+/** The rapids between cuts, one line per distinct crossing. */
+const travel = computed(() =>
+	(showTravel.value ? travelSegments(program?.travel.value ?? [], drawn) : []));
+
+/** How far the tool travels without cutting, over every pass. */
+const travelMm = computed(() => travelDistance(program?.travel.value ?? []));
 
 /** The grid cell, in millimetres, for the current zoom. */
 const cell = computed(() => gridSpacing(view.value.scale) * view.value.scale);
@@ -416,6 +493,23 @@ defineExpose({ view, zoomToFit, toWorld: (x, y) => toWorld(view.value, x, y) });
 		stroke: var(--gg-cut);
 		stroke-dasharray: 4 3;
 		opacity: 0.9;
+		pointer-events: none;
+	}
+
+	.tab {
+		pointer-events: none;
+	}
+
+	/*
+		Thin, dashed and dimmed, because the travel is context rather than content
+		— it has to be readable next to a cut without competing with it. The dashes
+		are in SCREEN units, unlike the kerf: a rapid has no width, so there is
+		nothing physical for it to scale with.
+	*/
+	.travel line {
+		stroke: var(--gg-accent);
+		stroke-dasharray: 2 4;
+		opacity: 0.55;
 		pointer-events: none;
 	}
 

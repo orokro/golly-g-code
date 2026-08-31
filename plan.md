@@ -1008,13 +1008,28 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
 - [x] `vector-effect: non-scaling-stroke` on the drawing — but **not** on the
   tool-width kerf, which is a real physical width and must scale. That contrast
   is the whole point of the view
-- [ ] Render layers, back to front: grid · reference images · work material · SVG paths (thin, random colors, Illustrator-wireframe style) · toolpaths (dashed centerline + tool-width round-cap/round-join outline) · tabs (hatched) · gizmos · puck
+- [x] Render layers, back to front: grid · toolpaths (dashed centreline +
+  tool-width outline) · **tabs (hatched)** · travel · SVG paths · puck.
+  *(Reference images and work material still to come.)* The tab hatch is in USER
+  space, so it scales with the drawing the way the kerf does — a tab is a
+  physical bridge of material and the hatch is its texture, where a screen-space
+  hatch would read as a UI decoration laid over the part
+- [x] **Tab spans are computed once**, in `generateJobToolpath`, and ride along
+  with the toolpath. The emitter breaks the cut at them and the workspace draws
+  them; a tab drawn in one place and cut in another is worse than a tab that is
+  not drawn at all, and the only way to be sure they agree is for there to be one
+  of them
 - [ ] **Selection cycling**: `document.elementsFromPoint()` returns the hit stack in z-order; advance an index when the click is within ~3px of the previous one, wrap at the end. Blender behaviour, essentially free
 - [ ] Selected state: thicker stroke + dashed bounding box
 - [ ] Gizmos: translate, rotate, scale (uniform + per-axis), all emitting coalesced commands
-- [ ] **Travel-move layer** — render the lifts and rapids between cuts, not just
-  the cutting, so the effect of ordering is visible rather than argued about.
-  Greg's request; prototyped in `lab/link.mjs`. Toggleable, since it clutters.
+- [x] **Travel-move layer** — the lifts and rapids between cuts, so the effect of
+  ordering is visible rather than argued about. Greg's request. Derived from the
+  emitted program rather than re-derived in the renderer: two copies of an
+  ordering rule is two copies that drift. Distinct crossings only — a six-pass
+  job makes the same crossing six times, and twenty-four lines stacked on each
+  other read as four — but the DISTANCE counts every pass, because the machine
+  makes every one. Measured in a browser: 165mm of travel became 245mm when two
+  jobs swapped order, which is the whole point of the layer
 - [ ] **Heading knob** for open-path offset System A — draggable radial line + numeric angle field
 - [ ] **Tab dragging** along the path (constrained to arc length)
 - [ ] **0,0 puck** shown when the Project is selected; dragging it re-bases all emitted coordinates

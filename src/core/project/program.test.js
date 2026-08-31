@@ -512,3 +512,97 @@ describe('the line map back to the outliner', () => {
 			.toEqual([{ jobId: null, name: 'Cut', from: 0, to: 1 }]);
 	});
 });
+
+
+describe('the travel between cuts', () => {
+
+	it('joins where one cut stopped to where the next one starts', () => {
+
+		const f = fixture([{ operation: 'outside', cutDepth: 2, passDepth: 1, ramp: false }]);
+		const { travel, text } = generateProgram(f.project);
+		const moves = movesOf(text);
+
+		expect(travel.length).toBeGreaterThan(0);
+
+		// every travel move must correspond to a real rapid in the emitted file,
+		// once the work zero is put back on -- otherwise the layer is drawing a
+		// picture of something the machine does not do
+		const rapids = moves.filter((m) => m.kind === 'rapid'
+			&& (m.to.x !== m.from.x || m.to.y !== m.from.y));
+
+		// to within the dialect's three decimal places -- the picture keeps full
+		// precision, the file is rounded, and a micron does not draw
+		for (const move of travel)
+			expect(rapids.some((r) =>
+				Math.abs(r.to.x - move.to[0]) < 0.002 && Math.abs(r.to.y - move.to[1]) < 0.002),
+			JSON.stringify(move)).toBe(true);
+	});
+
+	it('is in workspace coordinates, so the view can draw it without undoing anything', () => {
+
+		const plain = fixture([{ operation: 'outside', cutDepth: 2, passDepth: 1 }]);
+		const moved = fixture([{ operation: 'outside', cutDepth: 2, passDepth: 1 }],
+			{ workZero: { x: 20, y: 10 } });
+
+		// the cut moves in the FILE when the puck moves; the picture does not
+		expect(generateProgram(moved.project).travel)
+			.toEqual(generateProgram(plain.project).travel);
+	});
+
+	it('changes when the jobs are reordered, which is the entire point of it', () => {
+
+		// Greg's ask: see how the cutting order affects the movement, rather than
+		// argue about it.
+		// Two shapes far apart in X, so which way the crossing runs is legible
+		// rather than a pair of near-identical coordinates: the square lives
+		// around x20-80, the zigzag around x100-160.
+		const f = fixture([
+			{ name: 'Square', paths: ['square'], operation: 'outside', ramp: false },
+			{ name: 'Zigzag', paths: ['zigzag'], operation: 'center', ramp: false },
+		]);
+
+		const before = generateProgram(f.project).travel;
+
+		const jobs = folderOf(f.project.document, FolderRole.JOBS);
+		jobs.children.reverse();
+
+		const after = generateProgram(f.project).travel;
+
+		// One crossing either way, running the opposite way round. A move belongs
+		// to the job it travels INTO, because getting there is part of doing it —
+		// which is also what "show me this job's travel" should mean.
+		expect(before).toHaveLength(1);
+		expect(after).toHaveLength(1);
+		expect(after[0].jobId).not.toBe(before[0].jobId);
+
+		expect(before[0].from[0]).toBeLessThan(90);
+		expect(before[0].to[0]).toBeGreaterThan(90);
+
+		expect(after[0].from[0]).toBeGreaterThan(90);
+		expect(after[0].to[0]).toBeLessThan(90);
+	});
+
+	it('has one move per tab break, because that is what a tab costs', () => {
+
+		// A tab is a retract, a rapid across, and a plunge. Two tabs on a contour
+		// turn one continuous pass into two crossings -- visible, and the reason
+		// somebody might use fewer of them.
+		const none = fixture([{ operation: 'outside', cutDepth: 2, passDepth: 1, ramp: false }]);
+		const two = fixture([{
+			operation: 'outside', cutDepth: 2, passDepth: 1, ramp: false,
+			tabs: [{ position: 20, length: 6, depth: 0 }, { position: 130, length: 6, depth: 0 }],
+		}]);
+
+		const extra = generateProgram(two.project).travel.length
+			- generateProgram(none.project).travel.length;
+
+		// two passes, two tabs, two extra crossings each
+		expect(extra).toBe(4);
+	});
+
+	it('is empty when nothing can be cut', () => {
+		const f = fixture([{ operation: 'outside' }]);
+		const blocking = [{ nodeId: 'x', level: 'error', code: 'test', message: 'nope' }];
+		expect(generateProgram(f.project, { diagnostics: blocking }).travel).toEqual([]);
+	});
+});

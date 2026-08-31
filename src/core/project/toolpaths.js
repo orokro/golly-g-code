@@ -29,8 +29,9 @@ import { flattenSubPaths, DEFAULT_FLATTEN_TOLERANCE } from '../path/flatten.js';
 import { union, intersection, difference, xor } from '../geometry/clipper.js';
 import { Operation, generateToolpath } from '../cam/operations.js';
 import { OpenMode, openToolpath } from '../cam/openOffset.js';
+import { arcLengths, pointAt, projectOnto, placeTabs } from '../cam/tabs.js';
 import { NodeType, Combine } from './nodes.js';
-import { ancestorOfType, cuttingOrder } from './tree.js';
+import { ancestorOfType, childrenOf, cuttingOrder } from './tree.js';
 import { resolvedValues } from './inherit.js';
 
 /** The operations that need a closed contour. */
@@ -60,6 +61,11 @@ const COMBINERS = Object.freeze({
  *   rigidly, which is what tab placement needs to know (see openOffset.js)
  * @property {Array<Object>} source - the flattened source, same shape, for
  *   drawing the line the cut was made from
+ * @property {Array<Array<Object>>} tabSpans - the holding tabs resolved onto the
+ *   toolpath, one array of `{ start, end, depth }` per entry in `paths`, as arc
+ *   lengths along that run. Computed HERE rather than in the emitter because the
+ *   workspace has to draw them and the emitter has to break the cut at them, and
+ *   two computations of the same tab is two that can disagree
  * @property {String[]} warnings - anything worth saying about the result
  */
 
@@ -99,7 +105,7 @@ export function generateJobToolpath(project, jobId, options = {}) {
 	const open = runs.filter((run) => run.closed === false).map((run) => run.points);
 
 	const empty = {
-		jobId, toolId: tool.id, paths: [], depths: [], congruent: true,
+		jobId, toolId: tool.id, paths: [], depths: [], congruent: true, tabSpans: [],
 		source: runs.map((run) => ({ points: run.points, closed: run.closed })), warnings,
 	};
 
@@ -126,8 +132,8 @@ export function generateJobToolpath(project, jobId, options = {}) {
 			+ ` "${j.operation}", which is for open paths.`);
 
 	return wantsOpen
-		? openJob({ empty, job, j, t, open, tolerance, warnings })
-		: closedJob({ empty, job, j, t, closed, open, warnings });
+		? openJob({ document, empty, job, j, t, open, tolerance, warnings })
+		: closedJob({ document, empty, job, j, t, closed, open, warnings });
 }
 
 
@@ -182,7 +188,7 @@ function gather(project, pathIds, tolerance, warnings) {
  */
 function closedJob(context) {
 
-	const { empty, job, j, t, closed, open, warnings } = context;
+	const { document, empty, job, j, t, closed, open, warnings } = context;
 
 	// `center` and `engrave` follow the line itself, so an open run is welcome
 	// in them and is simply another thing to trace
@@ -207,12 +213,19 @@ function closedJob(context) {
 		topZ: 0,
 	});
 
+	const congruent = j.operation === Operation.CENTER || j.operation === Operation.ENGRAVE;
+	const tabbed = { ...empty, paths: result.paths, congruent };
+	const placed = placeJobTabs(document, job, tabbed, t.diameter / 2);
+
 	return {
-		...empty,
-		paths: result.paths,
+		...tabbed,
 		depths: result.depths,
-		congruent: j.operation === Operation.CENTER || j.operation === Operation.ENGRAVE,
-		warnings: [...warnings, ...result.warnings.map((w) => `${job.name}: ${w}`)],
+		tabSpans: placed.spans,
+		warnings: [
+			...warnings,
+			...result.warnings.map((w) => `${job.name}: ${w}`),
+			...placed.warnings.map((w) => `${job.name}: ${w}`),
+		],
 	};
 }
 
@@ -229,7 +242,7 @@ function closedJob(context) {
  */
 function openJob(context) {
 
-	const { empty, job, j, t, open, tolerance, warnings } = context;
+	const { document, empty, job, j, t, open, tolerance, warnings } = context;
 
 	if (open.length === 0)
 		return { ...empty, warnings };
@@ -257,12 +270,14 @@ function openJob(context) {
 		warnings.push(...result.warnings.map((w) => `${job.name}: ${w}`));
 	}
 
+	const tabbed = { ...empty, paths, congruent: congruences.every(Boolean) };
+	const placed = placeJobTabs(document, job, tabbed, t.diameter / 2);
+
 	return {
-		...empty,
-		paths,
+		...tabbed,
 		depths: depthsFor(j),
-		congruent: congruences.every(Boolean),
-		warnings,
+		tabSpans: placed.spans,
+		warnings: [...warnings, ...placed.warnings.map((w) => `${job.name}: ${w}`)],
 	};
 }
 
@@ -340,9 +355,166 @@ export function generateAll(project, options = {}) {
 		}
 		catch (error) {
 			return {
-				jobId: job.id, toolId: tool.id, paths: [], depths: [],
+				jobId: job.id, toolId: tool.id, paths: [], depths: [], tabSpans: [],
 				congruent: true, source: [], warnings: [error.message],
 			};
 		}
 	});
+}
+
+
+/**
+ * Places a job's tabs onto its toolpath runs.
+ *
+ * A tab's position is an arc length along the job's source, and a job may hold
+ * more than one source run, so the source runs are treated as one length laid
+ * end to end: a position of 250 on two 200mm outlines is 50mm into the second.
+ * That matches how the number is arrived at by dragging, and it means the
+ * outlines can be reordered without a tab silently landing somewhere else.
+ *
+ * @param {Object} document - the project document
+ * @param {Object} job - the job node
+ * @param {Object} toolpath - the partly built entry: `paths`, `source`, `congruent`
+ * @param {Number} toolRadius - the cutter radius, for the too-narrow warning
+ * @returns {Object} `{ spans, warnings }` — spans is one array per toolpath run
+ */
+function placeJobTabs(document, job, toolpath, toolRadius) {
+
+	/** @type {Array<Array<Object>>} */
+	const spans = toolpath.paths.map(() => []);
+
+	/** @type {String[]} */
+	const warnings = [];
+
+	const tabs = childrenOf(document, job.id)
+		.filter((node) => node.type === NodeType.TAB)
+		.map((node) => resolvedValues(document, node.id));
+
+	const sources = toolpath.source.filter((run) => run.points.length > 1);
+
+	if (tabs.length === 0)
+		return { spans, warnings };
+
+	if (sources.length === 0) {
+		warnings.push(`there is nothing for its ${tabs.length} tab(s) to be anchored to`);
+		return { spans, warnings };
+	}
+
+	const totals = sources.map((run) => arcLengths(run.points).at(-1));
+
+	/** @type {Map<String, Object>} tabs batched by which source and which run */
+	const groups = new Map();
+
+	for (const tab of tabs) {
+
+		const home = homeOf(totals, tab.position);
+		const source = sources[home.index].points;
+		const nearest = nearestRun(toolpath.paths, pointAt(source, home.along));
+		const key = `${home.index}:${nearest}`;
+
+		if (!groups.has(key))
+			groups.set(key, { source, run: nearest, tabs: [] });
+
+		groups.get(key).tabs.push({ ...tab, position: home.along });
+	}
+
+	for (const group of groups.values()) {
+
+		const result = placeTabs(group.source, toolpath.paths[group.run].points, group.tabs, {
+			toolRadius,
+			congruent: toolpath.congruent,
+		});
+
+		spans[group.run].push(...result.spans);
+		warnings.push(...result.warnings);
+	}
+
+	return { spans: spans.map(mergeSpans), warnings };
+}
+
+
+/**
+ * Which source run a position falls in, and how far along that one it is.
+ *
+ * Past the end of the last run it stays on the last run and past its end, which
+ * `placeTabs` reports and clamps — better than wrapping round to the start,
+ * where a tab would appear somewhere nobody put it.
+ *
+ * @param {Number[]} totals - the length of each source run
+ * @param {Number} position - arc length across all of them, millimetres
+ * @returns {Object} `{ index, along }`
+ */
+function homeOf(totals, position) {
+
+	let along = position;
+
+	for (let index = 0; index < totals.length - 1; index++) {
+
+		if (along <= totals[index])
+			return { index, along };
+
+		along -= totals[index];
+	}
+
+	return { index: totals.length - 1, along };
+}
+
+
+/**
+ * Which toolpath run passes closest to a point.
+ *
+ * @param {Array<Object>} runs - the toolpath runs
+ * @param {Number[]} point - the point on the source
+ * @returns {Number} the index of the nearest run
+ */
+function nearestRun(runs, point) {
+
+	let best = 0;
+	let distance = Infinity;
+
+	runs.forEach((run, index) => {
+
+		const found = projectOnto(run.points, point);
+
+		if (found.offset < distance) {
+			distance = found.offset;
+			best = index;
+		}
+	});
+
+	return best;
+}
+
+
+/**
+ * Sorts and merges overlapping spans.
+ *
+ * `placeTabs` already merges within one call, but a job can produce several
+ * calls — different source runs landing on the same toolpath run — and two
+ * bridges sharing material are still one bridge.
+ *
+ * @param {Array<Object>} spans - `{ start, end, depth }` along one toolpath run
+ * @returns {Array<Object>} sorted, non-overlapping
+ */
+function mergeSpans(spans) {
+
+	const sorted = [...spans].sort((a, b) => a.start - b.start);
+
+	/** @type {Array<Object>} */
+	const merged = [];
+
+	for (const span of sorted) {
+
+		const last = merged[merged.length - 1];
+
+		if (last !== undefined && span.start <= last.end) {
+			last.end = Math.max(last.end, span.end);
+			last.depth = Math.min(last.depth, span.depth);
+		}
+		else {
+			merged.push({ ...span });
+		}
+	}
+
+	return merged;
 }
