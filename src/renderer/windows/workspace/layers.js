@@ -17,7 +17,7 @@
  * ---------------------------------------------------------------------------
  */
 
-import { arcLengths, pointAt } from '@core/cam/tabs.js';
+import { arcLengths, pointAt, projectOnto } from '@core/cam/tabs.js';
 
 /**
  * The part of a polyline between two arc lengths, with exact ends.
@@ -152,4 +152,72 @@ export function travelDistance(travel) {
 
 	return (travel ?? []).reduce(
 		(sum, move) => sum + Math.hypot(move.to[0] - move.from[0], move.to[1] - move.from[1]), 0);
+}
+
+
+/**
+ * The draggable handle for each tab, across every job.
+ *
+ * A handle sits on the ANCHOR, not on the band. Two tabs close enough to share
+ * material merge into one span, and a merged span cannot say which tab it came
+ * from — so a band is not a thing you can pick up. The anchor is: it is exactly
+ * what the tab's `position` means, one per tab node, and it stays distinct right
+ * up to the moment two tabs sit on the same millimetre.
+ *
+ * @param {Array<Object>} toolpaths - what `generateAll` returned
+ * @param {Function} [include] - given a job id, whether to draw it
+ * @returns {Array<Object>} `{ tabId, jobId, position, point }`
+ */
+export function tabHandles(toolpaths, include = () => true) {
+
+	/** @type {Array<Object>} */
+	const handles = [];
+
+	for (const entry of toolpaths ?? [])
+		if (include(entry.jobId))
+			for (const anchor of entry.tabAnchors ?? [])
+				handles.push({ ...anchor, jobId: entry.jobId });
+
+	return handles;
+}
+
+
+/**
+ * Where a point falls along a job's source, as the arc length a tab uses.
+ *
+ * The source runs are laid end to end into one length, exactly as the tab
+ * placement reads them, so the number this returns can be written straight into
+ * the field. The nearest run wins — dragging a tab off one outline and onto
+ * another is a real thing to want on a job that cuts several shapes, and
+ * refusing it would mean deleting the tab and adding another.
+ *
+ * @param {Array<Object>} sources - the job's source runs, `{ points }`
+ * @param {Number[]} point - where the pointer is, in workspace millimetres
+ * @returns {Number|null} the position in millimetres, or null with no source
+ */
+export function positionFromPoint(sources, point) {
+
+	const runs = (sources ?? []).filter((run) => (run.points?.length ?? 0) > 1);
+
+	if (runs.length === 0)
+		return null;
+
+	let best = null;
+	let offset = Infinity;
+	let before = 0;
+
+	for (const run of runs) {
+
+		const lengths = arcLengths(run.points);
+		const found = projectOnto(run.points, point, lengths);
+
+		if (found.offset < offset) {
+			offset = found.offset;
+			best = before + found.distance;
+		}
+
+		before += lengths[lengths.length - 1];
+	}
+
+	return best;
 }

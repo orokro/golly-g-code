@@ -61,6 +61,10 @@ const COMBINERS = Object.freeze({
  *   rigidly, which is what tab placement needs to know (see openOffset.js)
  * @property {Array<Object>} source - the flattened source, same shape, for
  *   drawing the line the cut was made from
+ * @property {Array<Object>} tabAnchors - `{ tabId, position, point }` per tab,
+ *   where the tab is ANCHORED on the source. Spans are what the tab does to the
+ *   cut; anchors are where the tab lives, and they survive two tabs merging into
+ *   one bridge — which is why dragging grabs an anchor and not a span
  * @property {Array<Array<Object>>} tabSpans - the holding tabs resolved onto the
  *   toolpath, one array of `{ start, end, depth }` per entry in `paths`, as arc
  *   lengths along that run. Computed HERE rather than in the emitter because the
@@ -105,7 +109,8 @@ export function generateJobToolpath(project, jobId, options = {}) {
 	const open = runs.filter((run) => run.closed === false).map((run) => run.points);
 
 	const empty = {
-		jobId, toolId: tool.id, paths: [], depths: [], congruent: true, tabSpans: [],
+		jobId, toolId: tool.id, paths: [], depths: [], congruent: true,
+		tabSpans: [], tabAnchors: [],
 		source: runs.map((run) => ({ points: run.points, closed: run.closed })), warnings,
 	};
 
@@ -221,6 +226,7 @@ function closedJob(context) {
 		...tabbed,
 		depths: result.depths,
 		tabSpans: placed.spans,
+		tabAnchors: placed.anchors,
 		warnings: [
 			...warnings,
 			...result.warnings.map((w) => `${job.name}: ${w}`),
@@ -277,6 +283,7 @@ function openJob(context) {
 		...tabbed,
 		depths: depthsFor(j),
 		tabSpans: placed.spans,
+		tabAnchors: placed.anchors,
 		warnings: [...warnings, ...placed.warnings.map((w) => `${job.name}: ${w}`)],
 	};
 }
@@ -356,7 +363,7 @@ export function generateAll(project, options = {}) {
 		catch (error) {
 			return {
 				jobId: job.id, toolId: tool.id, paths: [], depths: [], tabSpans: [],
-				congruent: true, source: [], warnings: [error.message],
+				tabAnchors: [], congruent: true, source: [], warnings: [error.message],
 			};
 		}
 	});
@@ -376,7 +383,8 @@ export function generateAll(project, options = {}) {
  * @param {Object} job - the job node
  * @param {Object} toolpath - the partly built entry: `paths`, `source`, `congruent`
  * @param {Number} toolRadius - the cutter radius, for the too-narrow warning
- * @returns {Object} `{ spans, warnings }` — spans is one array per toolpath run
+ * @returns {Object} `{ spans, anchors, warnings }` — spans is one array per
+ *   toolpath run; anchors is `{ tabId, position, point }` per tab node
  */
 function placeJobTabs(document, job, toolpath, toolRadius) {
 
@@ -386,18 +394,19 @@ function placeJobTabs(document, job, toolpath, toolRadius) {
 	/** @type {String[]} */
 	const warnings = [];
 
-	const tabs = childrenOf(document, job.id)
-		.filter((node) => node.type === NodeType.TAB)
-		.map((node) => resolvedValues(document, node.id));
+	/** @type {Array<Object>} where each tab node sits on the source */
+	const anchors = [];
 
+	const nodes = childrenOf(document, job.id).filter((node) => node.type === NodeType.TAB);
+	const tabs = nodes.map((node) => ({ ...resolvedValues(document, node.id), tabId: node.id }));
 	const sources = toolpath.source.filter((run) => run.points.length > 1);
 
 	if (tabs.length === 0)
-		return { spans, warnings };
+		return { spans, anchors, warnings };
 
 	if (sources.length === 0) {
 		warnings.push(`there is nothing for its ${tabs.length} tab(s) to be anchored to`);
-		return { spans, warnings };
+		return { spans, anchors, warnings };
 	}
 
 	const totals = sources.map((run) => arcLengths(run.points).at(-1));
@@ -409,7 +418,11 @@ function placeJobTabs(document, job, toolpath, toolRadius) {
 
 		const home = homeOf(totals, tab.position);
 		const source = sources[home.index].points;
-		const nearest = nearestRun(toolpath.paths, pointAt(source, home.along));
+		const at = pointAt(source, home.along);
+
+		anchors.push({ tabId: tab.tabId, position: tab.position, point: at });
+
+		const nearest = nearestRun(toolpath.paths, at);
 		const key = `${home.index}:${nearest}`;
 
 		if (!groups.has(key))
@@ -429,7 +442,7 @@ function placeJobTabs(document, job, toolpath, toolRadius) {
 		warnings.push(...result.warnings);
 	}
 
-	return { spans: spans.map(mergeSpans), warnings };
+	return { spans: spans.map(mergeSpans), anchors, warnings };
 }
 
 

@@ -1031,7 +1031,20 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
   makes every one. Measured in a browser: 165mm of travel became 245mm when two
   jobs swapped order, which is the whole point of the layer
 - [ ] **Heading knob** for open-path offset System A — draggable radial line + numeric angle field
-- [ ] **Tab dragging** along the path (constrained to arc length)
+- [x] **Tab dragging** along the path, constrained to arc length. The handle sits
+  on the tab's ANCHOR on the source, not on its band: two tabs close enough to
+  share material merge into one span, and a merged span cannot say which tab it
+  came from, so a band is not a thing you can pick up. Dragging past the end of
+  one outline and onto another is allowed, because a job cutting several shapes
+  should not need the tab deleted and remade
+- [x] The drag dispatches every move and coalesces into ONE undo entry, sealed on
+  pointer-up. Verified in a browser: 30mm → 39.63mm across twelve moves, one undo
+  puts it back to 30 and empties the stack
+- [x] Two found by looking. The handle sat UNDER the transparent 8px hit stroke,
+  so it selected the shape behind it — which looks exactly like nothing
+  happening. And `r="5"` is five MILLIMETRES, so the handle grew to a 150px blob
+  at 700% zoom; a handle is a UI affordance and gets divided by the scale, which
+  is the exact opposite of what the kerf does
 - [ ] **0,0 puck** shown when the Project is selected; dragging it re-bases all emitted coordinates
 - [ ] Grid: `<pattern>`-based, configurable spacing, labeled in display units
 - [ ] Reference images: place, rotate, opacity, and **Calibrate Scale** — drop two pins, enter the real-world distance between them, solve the scale factor, then lock scale (rotate/translate still allowed)

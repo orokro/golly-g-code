@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { sliceBetween, tabBands, travelSegments, travelDistance } from './layers.js';
+import {
+	sliceBetween, tabBands, travelSegments, travelDistance, tabHandles, positionFromPoint,
+} from './layers.js';
 
 /** A 100mm straight line, so arc length and X are the same number. */
 const LINE = [[0, 0], [100, 0]];
@@ -131,5 +133,71 @@ describe('how far the tool travels without cutting', () => {
 	it('is zero for nothing at all', () => {
 		expect(travelDistance([])).toBe(0);
 		expect(travelDistance(undefined)).toBe(0);
+	});
+});
+
+
+describe('the tab handles', () => {
+
+	const entry = {
+		jobId: 'j', tabAnchors: [
+			{ tabId: 'a', position: 20, point: [20, 0] },
+			{ tabId: 'b', position: 60, point: [60, 0] },
+		],
+	};
+
+	it('gives one handle per tab node, carrying its job', () => {
+		const handles = tabHandles([entry]);
+		expect(handles.map((h) => h.tabId)).toEqual(['a', 'b']);
+		expect(handles[0].jobId).toBe('j');
+	});
+
+	it('still gives two handles when the two tabs have merged into one bridge', () => {
+
+		// The reason a handle is on the anchor and not on the band: two tabs
+		// sharing material are ONE span, and a merged span cannot say which tab it
+		// came from. Grab the band and you cannot know what you picked up.
+		const merged = { ...entry, tabSpans: [[{ start: 18, end: 62, depth: 1 }]] };
+		expect(tabHandles([merged])).toHaveLength(2);
+	});
+
+	it('leaves out a job that is not visible', () => {
+		expect(tabHandles([entry], () => false)).toEqual([]);
+	});
+});
+
+
+describe('dragging a tab back onto the source', () => {
+
+	const square = { points: [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]] };
+
+	it('is the arc length of the nearest point on the path', () => {
+		expect(positionFromPoint([square], [4, 0])).toBeCloseTo(4, 9);
+		expect(positionFromPoint([square], [10, 6])).toBeCloseTo(16, 9);
+	});
+
+	it('projects a pointer that is off the line, rather than refusing it', () => {
+		// the pointer is never exactly on a 0.1mm-wide path
+		expect(positionFromPoint([square], [4, 2.5])).toBeCloseTo(4, 9);
+	});
+
+	it('lays several runs end to end, the way tab placement reads them', () => {
+
+		// A job cutting two shapes has one arc-length space across both, so a tab
+		// can be dragged from one outline onto the other without being deleted and
+		// remade. 40 is the whole square, so 3 into the second run is 43.
+		const other = { points: [[100, 0], [110, 0]] };
+		expect(positionFromPoint([square, other], [103, 0])).toBeCloseTo(43, 9);
+	});
+
+	it('picks the nearer run when they overlap in X', () => {
+		const low = { points: [[0, 0], [10, 0]] };
+		const high = { points: [[0, 50], [10, 50]] };
+		expect(positionFromPoint([low, high], [4, 49])).toBeCloseTo(14, 9);
+	});
+
+	it('is null when there is nothing to anchor to', () => {
+		expect(positionFromPoint([], [0, 0])).toBe(null);
+		expect(positionFromPoint([{ points: [[1, 1]] }], [0, 0])).toBe(null);
 	});
 });

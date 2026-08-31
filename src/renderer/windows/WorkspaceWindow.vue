@@ -95,6 +95,29 @@
 					stroke-width="8" vector-effect="non-scaling-stroke"
 					@pointerdown.stop="onPickShape($event, shape)"/>
 
+				<!--
+					A grab handle per tab, on its ANCHOR rather than on its band. Two
+					tabs sharing material merge into one span, and a merged span cannot
+					say which tab it came from — so a band is not a thing you can pick
+					up, and the anchor is.
+
+					Above the transparent hit strokes, not below them: a handle that is
+					not the topmost thing under the cursor is not a handle. The first
+					version sat under an 8px invisible stroke and selected the shape
+					behind it instead, which looked exactly like nothing happening.
+
+					`r` is divided by the scale because it is a UI affordance, not a
+					physical thing — the opposite of the kerf. Five USER units is five
+					MILLIMETRES, which at 700% zoom is a 150px blob.
+				-->
+				<g v-if="showTabs" class="handles">
+					<circle v-for="handle in tabHandleList" :key="handle.tabId"
+						class="handle" :class="{ selected: selectedIds.includes(handle.tabId) }"
+						:cx="handle.point[0]" :cy="handle.point[1]" :r="6 / view.scale"
+						vector-effect="non-scaling-stroke"
+						@pointerdown.stop="onDragTab($event, handle)"/>
+				</g>
+
 				<!-- work zero: everything emitted is measured from here -->
 				<g class="puck" :transform="`translate(${machine.zero.x} ${machine.zero.y})`">
 					<circle r="7" :stroke-width="1.5" vector-effect="non-scaling-stroke"
@@ -124,13 +147,16 @@
 import { ref, shallowRef, computed, inject, watch } from 'vue';
 
 import { NodeType } from '@core/project/nodes.js';
+import { setField } from '@core/project/commands.js';
 import { isVisible, isLocked } from '@core/project/tree.js';
 import { resolvedValues } from '@core/project/inherit.js';
 
 import { useResize } from '../composables/useResize.js';
 import { useToolpaths } from '../composables/useToolpaths.js';
 import { pathData, polylineData, boundsOf, unionBounds, padBounds } from './workspace/geometry.js';
-import { tabBands, travelSegments, travelDistance } from './workspace/layers.js';
+import {
+	tabBands, travelSegments, travelDistance, tabHandles, positionFromPoint,
+} from './workspace/layers.js';
 import {
 	createView, viewTransform, toWorld, panBy, zoomAt, fitBounds, gridSpacing,
 } from './workspace/view.js';
@@ -296,6 +322,9 @@ const tabs = computed(() => {
 		.map((band) => ({ ...band, d: polylineData({ points: band.points }) }));
 });
 
+/** One draggable handle per tab. */
+const tabHandleList = computed(() => (showTabs.value ? tabHandles(toolpaths.value, drawn) : []));
+
 /** The rapids between cuts, one line per distinct crossing. */
 const travel = computed(() =>
 	(showTravel.value ? travelSegments(program?.travel.value ?? [], drawn) : []));
@@ -406,6 +435,66 @@ function onPickShape(event, shape) {
 }
 
 /**
+ * Drags a tab along the path it is anchored to.
+ *
+ * Constrained to arc length, because that is the only degree of freedom a tab
+ * has: it lives ON the edge, and a tab a millimetre off the line is not a
+ * shallower tab, it is a meaningless number. The pointer is projected back onto
+ * the source every move, so the tab tracks the nearest point on the path however
+ * far the cursor wanders off it.
+ *
+ * Every move dispatches, and they coalesce into ONE undo entry — `setField`'s
+ * coalesce key is the node and field, so a drag is a single step to undo while
+ * still publishing on every frame so the band moves under the cursor. The seal
+ * on pointer-up closes the entry so the NEXT drag is its own.
+ *
+ * @param {PointerEvent} event - the pointer that started it
+ * @param {Object} handle - the tab handle being dragged
+ */
+function onDragTab(event, handle) {
+
+	if (event.button !== 0)
+		return;
+
+	store.select([handle.tabId]);
+
+	if (isLocked(store.document, handle.tabId))
+		return;
+
+	const entry = toolpaths.value.find((found) => found.jobId === handle.jobId);
+
+	if (entry === undefined)
+		return;
+
+	/**
+	 * Moves the tab to wherever the pointer projects onto the source.
+	 *
+	 * @param {PointerEvent} move - the move
+	 */
+	const onMove = (move) => {
+
+		const at = local(move);
+		const world = toWorld(view.value, at.x, at.y);
+		const position = positionFromPoint(entry.source, [world.x, world.y]);
+
+		if (position === null)
+			return;
+
+		store.dispatch(setField(store.document, handle.tabId, 'position', position));
+	};
+
+	/** Finishes, and closes the coalesced entry so the next drag is its own. */
+	const onUp = () => {
+		window.removeEventListener('pointermove', onMove);
+		window.removeEventListener('pointerup', onUp);
+		store.seal();
+	};
+
+	window.addEventListener('pointermove', onMove);
+	window.addEventListener('pointerup', onUp);
+}
+
+/**
  * A pointer event's position within the svg.
  *
  * @param {PointerEvent} event - the pointer
@@ -498,6 +587,24 @@ defineExpose({ view, zoomToFit, toWorld: (x, y) => toWorld(view.value, x, y) });
 
 	.tab {
 		pointer-events: none;
+	}
+
+	.handle {
+		fill: var(--gg-surface);
+		fill-opacity: 0.85;
+		stroke: var(--gg-warning, #d8a657);
+		stroke-width: 1.5;
+		cursor: grab;
+	}
+
+	.handle:hover {
+		fill-opacity: 1;
+		stroke-width: 2.5;
+	}
+
+	.handle.selected {
+		stroke: var(--gg-accent);
+		stroke-width: 2.5;
 	}
 
 	/*
