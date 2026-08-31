@@ -979,10 +979,35 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
 
 ## Phase 4 — Workspace (SVG/DOM)
 
-- [ ] Root `<svg>` with pan/zoom via a transform on a root `<g>`; zoom to fit, zoom to selection
-- [ ] **One `<path>` element per object, never per segment** — a 50k-command `d` is fine, 50k sibling elements is not
+- [x] Root `<svg>` with pan/zoom via a transform on a root `<g>`; zoom to fit
+- [x] **The Y flip lives in that one transform.** The core is +Y up to match the
+  machine; SVG is +Y down. jscut deferred the same flip all the way to a
+  `-p.Y * scale` inside its G-code emitter, which left every stage in between
+  reasoning in a different coordinate system than its output
+- [x] **One `<path>` element per object, never per segment** — a 50k-command `d`
+  is fine, 50k sibling elements is not. The `d` is built when the geometry
+  changes and NOT when the view does; re-serialising a large `d` per mouse move
+  is the one reliable way to make SVG feel slow
+- [x] Cubics stay cubics — the browser draws a bezier exactly at any zoom, and
+  flattening one here would fix its resolution at whatever zoom built it. Arcs
+  are the exception and are flattened, since they are stored centre-parameterised
+  for the post-processor's G2/G3 and converting back would be a second
+  implementation of the same conversion to keep correct
+- [x] Zoom keeps the point under the cursor under the cursor, over a long run of
+  steps and not just one — drift there shows up as the drawing crawling away
+- [x] A 1-2-5 grid that rescales with the zoom, so it reads as a ruler rather
+  than as a wall of lines at one end and a single line at the other
+- [x] **The kerf, at the tool's real width**, translucent, scaling with
+  everything else. For a centre cut it IS the source path stroked at the tool
+  diameter with round caps and joins, which the browser draws for free. The
+  offset operations wait for the toolpath from `core/cam` in Phase 5 — drawing an
+  offset as if it were a centre cut would be a picture of a cut nobody asked for
+- [x] Click to select, syncing both ways with the outliner; locked shapes are not
+  hit-testable, because that is what locking is for
 - [ ] **Drag via CSS `transform` on a wrapper `<g>`; commit path data only on release.** Re-serializing a large `d` every mousemove is the one way to make SVG feel slow here
-- [ ] `vector-effect: non-scaling-stroke` on dashed source paths — but **not** on the tool-width outline, which represents real physical width and must scale
+- [x] `vector-effect: non-scaling-stroke` on the drawing — but **not** on the
+  tool-width kerf, which is a real physical width and must scale. That contrast
+  is the whole point of the view
 - [ ] Render layers, back to front: grid · reference images · work material · SVG paths (thin, random colors, Illustrator-wireframe style) · toolpaths (dashed centerline + tool-width round-cap/round-join outline) · tabs (hatched) · gizmos · puck
 - [ ] **Selection cycling**: `document.elementsFromPoint()` returns the hit stack in z-order; advance an index when the click is within ~3px of the previous one, wrap at the end. Blender behaviour, essentially free
 - [ ] Selected state: thicker stroke + dashed bounding box
