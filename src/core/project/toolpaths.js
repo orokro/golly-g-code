@@ -206,16 +206,49 @@ function closedJob(context) {
 
 	const { document, empty, job, j, t, closed, open, warnings } = context;
 
-	// `center` and `engrave` follow the line itself, so an open run is welcome
-	// in them and is simply another thing to trace
-	const contours = j.operation === Operation.CENTER || j.operation === Operation.ENGRAVE
-		? [...closed, ...open]
-		: closed;
+	const tracing = j.operation === Operation.CENTER || j.operation === Operation.ENGRAVE;
 
-	if (contours.length === 0)
-		return { ...empty, warnings };
+	// -----------------------------------------------------------------------
+	// An open run is TRACED, never sent through `generateToolpath`.
+	//
+	// `center` and `engrave` follow the line itself, so an open run belongs in
+	// them — but the first thing `generateToolpath` does is normalize its input
+	// through clipper, which is a boolean union and therefore treats every
+	// contour as a CLOSED POLYGON. Handing it an open skyline gave back a closed
+	// ring: a cut straight across the bottom of the part that nobody drew and
+	// nothing warned about. Greg found it on a drawing of the Painted Ladies.
+	//
+	// This is the exact failure normalize.js's header calls out in jscut —
+	// "treats every contour as a closed polygon, which is what turns 'follow this
+	// line' into 'cut out this zero-area sliver'" — arrived at from the inside.
+	// -----------------------------------------------------------------------
+	const traced = tracing ? open.map((points) => ({ points, closed: false })) : [];
 
-	const combined = combine(contours, j.combine, warnings);
+	if (tracing && j.margin !== 0 && open.length > 0)
+		warnings.push(`${job.name}: the margin was ignored on ${open.length} open path`
+			+ `${open.length === 1 ? '' : 's'} — an open line has no side to offset toward.`
+			+ ' Use the normal or heading offset for that.');
+
+	if (closed.length === 0) {
+
+		if (traced.length === 0)
+			return { ...empty, warnings };
+
+		// nothing closed to offset, so there is no `generateToolpath` result to
+		// take the depths from
+		const onlyTraced = { ...empty, paths: traced, congruent: true };
+		const placedOpen = placeJobTabs(document, job, onlyTraced, t.diameter / 2);
+
+		return {
+			...onlyTraced,
+			depths: depthsFor(j),
+			tabSpans: placedOpen.spans,
+			tabAnchors: placedOpen.anchors,
+			warnings: [...warnings, ...placedOpen.warnings.map((w) => `${job.name}: ${w}`)],
+		};
+	}
+
+	const combined = combine(closed, j.combine, warnings);
 
 	const result = generateToolpath(combined, {
 		operation: j.operation,
@@ -229,8 +262,7 @@ function closedJob(context) {
 		topZ: 0,
 	});
 
-	const congruent = j.operation === Operation.CENTER || j.operation === Operation.ENGRAVE;
-	const tabbed = { ...empty, paths: result.paths, congruent };
+	const tabbed = { ...empty, paths: [...result.paths, ...traced], congruent: tracing };
 	const placed = placeJobTabs(document, job, tabbed, t.diameter / 2);
 
 	return {

@@ -337,3 +337,81 @@ describe('holding tabs ride along with the toolpath', () => {
 		expect(generateJobToolpath(f.project, f.jobId).tabSpans).toEqual([]);
 	});
 });
+
+
+describe('an open path is TRACED, never closed', () => {
+
+	/**
+	 * A job over the zigzag, which is open.
+	 *
+	 * @param {Object} [job] - fields for the job
+	 * @returns {Object} the result of generating it
+	 */
+	const traceZigzag = (job = {}) => {
+		const f = fixture({ operation: 'center', cutDepth: 1, ...job }, ['zigzag']);
+		return { result: generateJobToolpath(f.project, f.jobId), f };
+	};
+
+	it('comes back open, not as a ring', () => {
+
+		// The bug Greg found on a drawing of the Painted Ladies. The first thing
+		// `generateToolpath` does is normalize its input through clipper, which is
+		// a boolean union and so treats every contour as a CLOSED POLYGON — an
+		// open skyline came back as a closed ring with a cut straight across the
+		// bottom of the part that nobody had drawn.
+		const { result } = traceZigzag();
+
+		expect(result.paths).toHaveLength(1);
+		expect(result.paths[0].closed).toBe(false);
+	});
+
+	it('traces the drawn line exactly, point for point', () => {
+
+		// Not merely "open": the same points. Anything that had been through
+		// clipper would come back with a different vertex count and different
+		// coordinates even if the closed flag were then patched to false.
+		const { result } = traceZigzag();
+		const source = result.source[0].points;
+		const cut = result.paths[0].points;
+
+		expect(cut).toHaveLength(source.length);
+		expect(cut[0]).toEqual(source[0]);
+		expect(cut.at(-1)).toEqual(source.at(-1));
+	});
+
+	it('does not join its two ends, however far apart they are', () => {
+		const { result } = traceZigzag();
+		const points = result.paths[0].points;
+		const gap = Math.hypot(points[0][0] - points.at(-1)[0], points[0][1] - points.at(-1)[1]);
+		expect(gap).toBeGreaterThan(1);
+	});
+
+	it('engraves an open path the same way', () => {
+		const { result } = traceZigzag({ operation: 'engrave' });
+		expect(result.paths[0].closed).toBe(false);
+	});
+
+	it('still gets depth passes even with nothing closed to offset', () => {
+		const { result } = traceZigzag({ cutDepth: 3, passDepth: 1 });
+		expect(result.depths).toEqual([-1, -2, -3]);
+	});
+
+	it('says the margin was ignored rather than silently offsetting nothing', () => {
+
+		// A margin moves a closed contour in or out. An open line has no side to
+		// offset toward, which is what the normal and heading modes are for — so
+		// the honest answer is to trace it and say the margin did nothing.
+		const { result } = traceZigzag({ margin: 2 });
+		expect(result.warnings.join(' ')).toMatch(/margin was ignored/);
+	});
+
+	it('cuts the closed shapes and traces the open ones, in one job', () => {
+
+		// A job holding both: the square is offset by clipper, the zigzag is not.
+		const f = fixture({ operation: 'center', cutDepth: 1 }, ['square', 'zigzag']);
+		const result = generateJobToolpath(f.project, f.jobId);
+
+		expect(result.paths.filter((path) => path.closed)).toHaveLength(1);
+		expect(result.paths.filter((path) => path.closed === false)).toHaveLength(1);
+	});
+});

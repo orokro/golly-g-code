@@ -751,17 +751,36 @@ function local(event) {
 // merely beside it, so there is not even an edge of it showing.
 let fitted = false;
 
+// ---------------------------------------------------------------------------
+// Fit ONCE, when there is both room and something to look at.
+//
+// This watched `[a, b]` — a new array literal every evaluation, so Vue's
+// identity check said "changed" every single time and `zoomToFit()` ran on every
+// reactive tick. Harmless while nothing could move; catastrophic the moment
+// dragging existed, because it closes a feedback loop: drag → dispatch → shapes
+// recompute → refit → the same screen point now means a different WORLD point →
+// the next pointermove computes a huge delta → the shape rockets away and refits
+// again. Measured: a 180px drag that should have moved the part 15mm moved it
+// -1148mm, and the zoom went from 1211% to 80% mid-drag.
+//
+// The source is a single boolean now, so it fires on a real transition and
+// nothing else. Going back to empty re-arms it, so New → Import still frames the
+// drawing rather than leaving you looking at a corner of the bed.
+// ---------------------------------------------------------------------------
 watch(
-	() => [size.value.width > 0, shapes.value.length > 0],
-	([hasRoom, hasDrawing]) => {
+	() => size.value.width > 0 && shapes.value.length > 0,
+	(ready) => {
 
-		if (hasRoom === false)
+		if (ready === false) {
+			fitted = false;
+			return;
+		}
+
+		if (fitted)
 			return;
 
-		if (fitted === false || hasDrawing) {
-			fitted = true;
-			zoomToFit();
-		}
+		fitted = true;
+		zoomToFit();
 	},
 	{ immediate: true, flush: 'post' },
 );
