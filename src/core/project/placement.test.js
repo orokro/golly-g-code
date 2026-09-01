@@ -14,6 +14,7 @@ import { NodeType, FolderRole, createNode } from './nodes.js';
 import { createProject } from './document.js';
 import { folderOf } from './tree.js';
 import { prepareSvgImport } from './import.js';
+import { prepareJob } from './jobs.js';
 import { generateJobToolpath } from './toolpaths.js';
 import {
 	IDENTITY, compose, apply, isIdentity, localMatrix, localBounds, centreOf,
@@ -161,7 +162,11 @@ describe('a shape inside a drawing that has itself been moved', () => {
 describe('the cut follows the shape, which is the whole point', () => {
 
 	/**
-	 * The toolpath bounds for a job over the fixture's path.
+	 * The toolpath bounds for a job made from the fixture's path.
+	 *
+	 * The job COPIES the outline and takes on the path's placement, so it appears
+	 * exactly where the path was — which is what makes these tests still about
+	 * placement rather than about referencing.
 	 *
 	 * @param {Object} f - the fixture
 	 * @returns {Object} the bounds
@@ -170,10 +175,16 @@ describe('the cut follows the shape, which is the whole point', () => {
 
 		const { document } = f.project;
 
+		let k = 0;
+		const newId = () => `job${(k += 1)}`;
+
 		const tool = createNode(NodeType.TOOL, { name: 'Bit' }, { newId: () => 'tool' });
-		const job = createNode(NodeType.JOB, {
-			name: 'Cut', paths: [f.pathId], operation: 'outside', cutDepth: 1,
-		}, { newId: () => 'job' });
+		const made = prepareJob(f.project, [f.pathId], {
+			newId, name: 'Cut', fields: { operation: 'outside', cutDepth: 1 },
+		});
+		const job = made.job;
+
+		Object.assign(f.project.geometry, made.geometry);
 
 		tool.children = [job.id];
 		document.nodes[tool.id] = tool;

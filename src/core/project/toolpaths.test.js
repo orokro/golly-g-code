@@ -4,6 +4,7 @@ import { NodeType, FolderRole, Combine, createNode } from './nodes.js';
 import { createProject } from './document.js';
 import { folderOf } from './tree.js';
 import { prepareSvgImport } from './import.js';
+import { prepareJob } from './jobs.js';
 import { generateJobToolpath, generateAll } from './toolpaths.js';
 
 /** Deterministic ids. */
@@ -18,7 +19,12 @@ const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="200mm
 	+ '</svg>';
 
 /**
- * A project with that drawing imported and one job over chosen paths.
+ * A project with that drawing imported and one job owning a copy of chosen paths.
+ *
+ * Built through `prepareJob`, which is how the application makes a job: the
+ * outline is COPIED into the job and the geometry it returns goes into the side
+ * store. Handing the job a hand-written outline instead would be a fixture that
+ * agrees with nothing.
  *
  * @param {Object} [job] - fields for the job
  * @param {String[]} [want] - which shapes, by name
@@ -44,11 +50,11 @@ function fixture(job = {}, want = ['square']) {
 		.map((node) => [node.name, node.id]));
 
 	const tool = createNode(NodeType.TOOL, { name: 'Bit' }, { newId });
-	const jobNode = createNode(NodeType.JOB, {
-		name: 'Cut',
-		paths: want.map((name) => byName[name]),
-		...job,
-	}, { newId });
+	const madeJob = prepareJob(project, want.map((name) => byName[name]),
+		{ newId, name: 'Cut', fields: job });
+	const jobNode = madeJob.job;
+
+	Object.assign(project.geometry, madeJob.geometry);
 
 	tool.children = [jobNode.id];
 	document.nodes[tool.id] = tool;
@@ -219,12 +225,14 @@ describe('saying what it could not do', () => {
 	});
 
 	it('says when the geometry is missing rather than drawing nothing', () => {
+		// the job's OWN outline, now that it has one: losing the drawing's copy is
+		// no longer something the cut can even notice
 		const f = fixture({ operation: 'outside', cutDepth: 1 });
-		delete f.project.geometry[f.project.document.nodes[f.byName.square].geometry];
+		delete f.project.geometry[f.project.document.nodes[f.jobId].geometry];
 
 		const result = generateJobToolpath(f.project, f.jobId);
 
-		expect(result.warnings.join(' ')).toMatch(/geometry for "square" is missing/);
+		expect(result.warnings.join(' ')).toMatch(/has no outline of its own to cut/);
 		expect(result.paths).toEqual([]);
 	});
 

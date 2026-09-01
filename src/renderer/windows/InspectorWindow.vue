@@ -62,6 +62,7 @@ import { childrenOf, folderOf } from '@core/project/tree.js';
 import { setField, clearOverride, addNode, addSubtree, setReferences } from '@core/project/commands.js';
 import { prepareSvgReimport } from '@core/project/import.js';
 import { arcLengths } from '@core/cam/tabs.js';
+import { prepareJob } from '@core/project/jobs.js';
 
 import { inspectorLayout, isRelevant, MIXED, TYPE_LABEL } from './inspector/layout.js';
 import FieldRow from './inspector/FieldRow.vue';
@@ -75,7 +76,7 @@ const unit = computed(() => settings?.units ?? 'mm');
 /** What to draw, for whatever is selected. */
 const layout = computed(() => {
 	store.revision.value;
-	return inspectorLayout(store.document, store.selection.value.ids);
+	return inspectorLayout(store.project, store.selection.value.ids);
 });
 
 /** What kind of thing is selected, in words rather than in identifiers. */
@@ -211,15 +212,19 @@ const actions = computed(() => {
 });
 
 /**
- * Makes a job that cuts the selected paths.
+ * Makes a job that OWNS a copy of the selected paths' outlines.
  *
  * Into the last tool group, or into a new one when there is none — and the tool
  * and job go in as one command, for the same reason the outliner's New Job does.
  *
- * The operation is chosen from the paths themselves: an open path has no inside
- * or outside, so offering `outside` for one would be offering something the
- * geometry cannot do. Centre is the honest default either way, and it is what
- * D17 describes — the tool follows the line you drew.
+ * The copy is the point, not an implementation detail: from here the job is a
+ * first-class object with its own outline and its own placement. Hide the
+ * drawing, move it, delete it, re-import it at another resolution — the job does
+ * not care. See core/project/jobs.js.
+ *
+ * The geometry goes into the side store BEFORE the command runs, the same way an
+ * import does. It is keyed and immutable, so nothing can observe it early, and
+ * an undo that strands it is cleaned up by `pruneProject` on the next save.
  *
  * @param {Object[]} paths - the selected SvgPath nodes
  */
@@ -227,8 +232,11 @@ function createJobFromPaths(paths) {
 
 	const jobs = folderOf(store.document, 'jobs');
 	const tools = childrenOf(store.document, jobs.id).filter((n) => n.type === NodeType.TOOL);
-	const name = paths.length === 1 ? paths[0].name : `${paths.length} paths`;
-	const job = createNode(NodeType.JOB, { name, paths: paths.map((path) => path.id) });
+
+	const prepared = prepareJob(store.project, paths.map((path) => path.id));
+	const job = prepared.job;
+
+	Object.assign(store.project.geometry, prepared.geometry);
 
 	if (tools.length > 0) {
 		store.dispatch(addNode(store.document, tools.at(-1).id, job));
@@ -240,6 +248,16 @@ function createJobFromPaths(paths) {
 
 	store.dispatch(addSubtree(store.document, jobs.id, [tool, job],
 		{ label: 'Create job from path', selectId: job.id }));
+}
+
+/**
+ * Where a job's tabs are measured along, now that a job owns its own outline.
+ *
+ * @param {Object} job - the job node
+ * @returns {Number[][]} the first subpath's points
+ */
+function outlinePoints(job) {
+	return store.project.geometry[job.geometry]?.subPaths?.[0]?.segments?.map((s) => s.to) ?? [];
 }
 
 /**
@@ -273,8 +291,7 @@ function useAsWorkMaterial(paths) {
  */
 function addTab(job) {
 
-	const geometry = store.project.geometry[store.document.nodes[job.paths?.[0]]?.geometry];
-	const points = geometry?.subPaths?.[0]?.segments?.map((segment) => segment.to) ?? [];
+	const points = outlinePoints(job);
 	const middle = points.length > 1 ? arcLengths(points).at(-1) / 2 : 0;
 
 	store.dispatch(addNode(store.document, job.id,

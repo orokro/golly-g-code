@@ -3,19 +3,39 @@ import { describe, it, expect } from 'vitest';
 import { NodeType, FolderRole, JobOperation, createNode } from './nodes.js';
 import { createProject } from './document.js';
 import { folderOf } from './tree.js';
+import { prepareJob } from './jobs.js';
+import { normalizePathData } from '../path/normalize.js';
 import { Level, DepthClass, classifyDepth, diagnose, blocksExport, byNode } from './diagnostics.js';
 
 /** Deterministic ids. */
 const counter = () => { let n = 0; return () => `n${(n += 1)}`; };
 
 /**
- * A project with one tool and one job on one open path.
+ * The drawing's two paths: a bent line that stays open, and a closed triangle.
+ *
+ * Real path data rather than a hand-written `closed` flag, because the whole
+ * point of the operation checks is that they count the SUBPATHS of the job's own
+ * outline rather than trusting a flag that could disagree with the shape.
+ */
+const SHAPES = Object.freeze({
+	open: 'M0 0 L10 0 L10 10',
+	closed: 'M0 0 L10 0 L10 10 Z',
+});
+
+/**
+ * A project with one tool and one job whose outline is copied from one open path.
+ *
+ * The job is built by `prepareJob` and the geometry it returns is merged into the
+ * store, exactly as the application does it — a job owns its outline now, so a
+ * fixture that only pointed at a path would be describing a model that is gone.
  *
  * @param {Object} [job] - fields to set on the job
  * @param {Object} [projectFields] - fields to set on the project
- * @returns {Object} `{ project, document, n }`
+ * @param {String[]} [sources] - which of the drawing's paths, by name, the job's
+ *   outline is copied from
+ * @returns {Object} `{ project, document, newId, n }`
  */
-function fixture(job = {}, projectFields = {}) {
+function fixture(job = {}, projectFields = {}, sources = ['open']) {
 
 	const newId = counter();
 	const built = createProject({ name: 'Test', newId });
@@ -30,15 +50,50 @@ function fixture(job = {}, projectFields = {}) {
 
 	const doc = put(folderOf(document, FolderRole.SVGS).id,
 		createNode(NodeType.SVG_DOC, { name: 'a.svg' }, { newId }));
-	const open = put(doc.id, createNode(NodeType.SVG_PATH, { name: 'open', closed: false }, { newId }));
-	const closed = put(doc.id, createNode(NodeType.SVG_PATH, { name: 'closed', closed: true }, { newId }));
+	const open = put(doc.id, createNode(NodeType.SVG_PATH,
+		{ name: 'open', closed: false, geometry: 'g-open' }, { newId }));
+	const closed = put(doc.id, createNode(NodeType.SVG_PATH,
+		{ name: 'closed', closed: true, geometry: 'g-closed' }, { newId }));
+
+	built.geometry['g-open'] = { subPaths: normalizePathData(SHAPES.open).subPaths };
+	built.geometry['g-closed'] = { subPaths: normalizePathData(SHAPES.closed).subPaths };
 
 	const tool = put(folderOf(document, FolderRole.JOBS).id,
 		createNode(NodeType.TOOL, { name: 'Bit' }, { newId }));
-	const j = put(tool.id, createNode(NodeType.JOB,
-		{ name: 'Cut', paths: [open.id], ...job }, { newId }));
+
+	const byName = { open, closed };
+	const made = prepareJob(built, sources.map((name) => byName[name].id),
+		{ newId, name: 'Cut', fields: job });
+	const j = put(tool.id, made.job);
+
+	Object.assign(built.geometry, made.geometry);
 
 	return { project: built, document, newId, n: { doc, open, closed, tool, j } };
+}
+
+/**
+ * Rebuilds a fixture's job so it owns a copy of the given paths' outlines.
+ *
+ * The same route the application takes when a job is made, used here because the
+ * old model let a test simply repoint `paths` at another node.
+ *
+ * @param {Object} context - a fixture
+ * @param {String[]} pathIds - the SvgPath nodes to copy from
+ * @returns {void}
+ */
+function remake(context, pathIds) {
+
+	const { project, document, newId, n } = context;
+	const made = prepareJob(project, pathIds, { newId });
+
+	Object.assign(project.geometry, made.geometry);
+	Object.assign(document.nodes[n.j.id], {
+		geometry: made.job.geometry,
+		source: made.job.source,
+		offset: made.job.offset,
+		rotation: made.job.rotation,
+		scale: made.job.scale,
+	});
 }
 
 /** Codes reported, for terse assertions. */
@@ -142,7 +197,7 @@ describe('things it deliberately stays quiet about', () => {
 describe('things that stop a program being emitted', () => {
 
 	it('a job with no paths', () => {
-		const { project } = fixture({ paths: [] });
+		const { project } = fixture({}, {}, []);
 
 		expect(find(project, 'job-empty').level).toBe(Level.ERROR);
 		expect(blocksExport(diagnose(project))).toBe(true);
@@ -157,27 +212,27 @@ describe('things that stop a program being emitted', () => {
 	});
 
 	it('warns rather than blocking when only some of a mixed selection is wrong', () => {
-		const { project, document, n } = fixture({ operation: JobOperation.POCKET });
-		document.nodes[n.j.id].paths = [n.open.id, n.closed.id];
+		const context = fixture({ operation: JobOperation.POCKET });
+		remake(context, [context.n.open.id, context.n.closed.id]);
 
-		expect(find(project, 'operation-mismatch')).toMatchObject({ level: Level.WARNING });
-		expect(blocksExport(diagnose(project))).toBe(false);
+		expect(find(context.project, 'operation-mismatch')).toMatchObject({ level: Level.WARNING });
+		expect(blocksExport(diagnose(context.project))).toBe(false);
 	});
 
 	it('says nothing when the operation suits the paths', () => {
-		const { project, document, n } = fixture({ operation: JobOperation.HEADING });
-		expect(codes(project)).not.toContain('operation-mismatch');
+		const context = fixture({ operation: JobOperation.HEADING });
+		expect(codes(context.project)).not.toContain('operation-mismatch');
 
-		document.nodes[n.j.id].paths = [n.closed.id];
-		document.nodes[n.j.id].operation = JobOperation.INSIDE;
-		expect(codes(project)).not.toContain('operation-mismatch');
+		remake(context, [context.n.closed.id]);
+		context.document.nodes[context.n.j.id].operation = JobOperation.INSIDE;
+		expect(codes(context.project)).not.toContain('operation-mismatch');
 	});
 
 	it('a centre cut is fine on either, because it means the same thing on both', () => {
-		const { project, document, n } = fixture({ operation: JobOperation.CENTER });
-		document.nodes[n.j.id].paths = [n.open.id, n.closed.id];
+		const context = fixture({ operation: JobOperation.CENTER });
+		remake(context, [context.n.open.id, context.n.closed.id]);
 
-		expect(codes(project)).not.toContain('operation-mismatch');
+		expect(codes(context.project)).not.toContain('operation-mismatch');
 	});
 
 	it('a safe Z that is not above the surface', () => {

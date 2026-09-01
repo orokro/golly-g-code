@@ -54,7 +54,7 @@ import { resolvedValues } from './inherit.js';
 export const IDENTITY = Object.freeze([1, 0, 0, 1, 0, 0]);
 
 /** The node types that carry a placement. */
-export const PLACEABLE = Object.freeze([NodeType.SVG_PATH, NodeType.SVG_DOC]);
+export const PLACEABLE = Object.freeze([NodeType.SVG_PATH, NodeType.SVG_DOC, NodeType.JOB]);
 
 
 /**
@@ -161,7 +161,9 @@ export function localBounds(project, id) {
 	if (node === undefined)
 		return null;
 
-	if (node.type === NodeType.SVG_PATH)
+	// a job owns its outline exactly as a path does, and for the same reason:
+	// both are "a shape that sits somewhere"
+	if (node.type === NodeType.SVG_PATH || node.type === NodeType.JOB)
 		return boundsOfSubPaths(project.geometry?.[node.geometry]?.subPaths ?? []);
 
 	return unionBounds(childrenOf(project.document, id)
@@ -211,6 +213,47 @@ export function matrixFor(project, id) {
 			localMatrix(resolvedValues(document, node.id), centreOf(project, node.id)));
 
 	return matrix;
+}
+
+
+/**
+ * Pulls a matrix apart into the three fields that made it.
+ *
+ * The inverse of {@link localMatrix}, and exact for anything that function can
+ * produce — which is rotation and scale about a centre, plus a translation. It
+ * is used when a job takes on the placement of the path it was made from, so the
+ * job appears exactly where the path was and its own numbers read sensibly.
+ *
+ * A rotation composed with a NON-UNIFORM scale at two different levels can
+ * produce shear, and shear is not expressible in three fields at all — this
+ * returns the closest thing that is. That is the same limitation gizmo.js
+ * documents, arrived at from the other direction.
+ *
+ * @param {Number[]} m - the matrix
+ * @param {Number[]} centre - the centre it should be expressed about
+ * @returns {Object} `{ offset, rotation, scale }`
+ */
+export function decompose(m, centre) {
+
+	const [a, b, c, d, e, f] = m;
+	const [cx, cy] = centre ?? [0, 0];
+
+	const rotation = Math.atan2(b, a);
+	const sx = Math.hypot(a, b);
+
+	// a mirrored transform has a negative determinant, and the sign has to land
+	// on one axis or the other -- Y by convention, so a rotation stays a rotation
+	const determinant = (a * d) - (b * c);
+	const sy = Math.hypot(c, d) * (determinant < 0 ? -1 : 1);
+
+	return {
+		offset: {
+			x: e - cx + ((a * cx) + (c * cy)),
+			y: f - cy + ((b * cx) + (d * cy)),
+		},
+		rotation,
+		scale: { x: sx, y: sy },
+	};
 }
 
 

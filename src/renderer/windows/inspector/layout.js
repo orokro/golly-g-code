@@ -29,6 +29,8 @@
  */
 
 import { NodeType, fieldsOf } from '@core/project/nodes.js';
+import { CLOSED_ONLY, OPEN_ONLY } from '@core/project/diagnostics.js';
+import { outlineOf } from '@core/project/jobs.js';
 import { resolveField, Source } from '@core/project/inherit.js';
 import { parentIndex } from '@core/project/tree.js';
 
@@ -69,11 +71,13 @@ export const GROUPS = Object.freeze({
 	],
 
 	[NodeType.JOB]: [
-		{ name: 'Cut', fields: ['paths', 'operation', 'cutDepth', 'margin', 'width', 'combine', 'direction'] },
+		{ name: 'Cut', fields: ['operation', 'cutDepth', 'margin', 'width', 'combine', 'direction'] },
+		{ name: 'Placement', fields: ['offset', 'rotation', 'scale'] },
 		{ name: 'Open paths', fields: ['offsetSide', 'offsetHeading'] },
 		{ name: 'Entry and exit', fields: ['ramp', 'rampAngle', 'leadIn', 'leadOut', 'leadSide'] },
 		{ name: 'Feeds and speeds', fields: ['passDepth', 'stepover', 'plungeRate', 'cutFeed', 'spindleRpm'] },
 		{ name: 'Corners', fields: ['dogbones'] },
+		{ name: 'Outline', fields: ['geometry', 'source'] },
 		{ name: 'General', fields: ['name', 'locked', 'visible'] },
 	],
 
@@ -158,8 +162,61 @@ const READ_ONLY = Object.freeze([
  * @returns {Object} `{ type, nodes, title, groups }`; `groups` is empty when
  *   there is nothing selected
  */
-export function inspectorLayout(document, ids) {
+/**
+ * The options a field should actually offer, given what the node IS.
+ *
+ * The dropdown used to list every operation whatever the geometry: an open path
+ * was cheerfully offered `inside`, `outside` and `pocket`, which it cannot be
+ * cut with, and choosing one produced an error diagnostic and no toolpath. A
+ * list of things that do not work is the wrong place to find that out.
+ *
+ * The node's CURRENT value always stays in the list even when it is no longer
+ * possible — a select showing nothing is worse than one showing the wrong thing,
+ * and the diagnostic already explains why it is wrong.
+ *
+ * @param {Object} project - `{ document, geometry }`
+ * @param {Object[]} nodes - the selected nodes
+ * @param {String} field - the field name
+ * @param {Object} spec - its FieldSpec
+ * @returns {String[]|undefined} the options to offer, or the spec's own
+ */
+export function optionsFor(project, nodes, field, spec) {
 
+	if (field !== 'operation' || spec.options === undefined)
+		return spec.options;
+
+	const jobs = nodes.filter((node) => node.type === NodeType.JOB);
+
+	if (jobs.length === 0 || jobs.length !== nodes.length)
+		return spec.options;
+
+	const outlines = jobs.map((node) => outlineOf(project, node.id));
+
+	// nothing to go on yet, so offer everything rather than an empty list
+	if (outlines.some((outline) => outline.total === 0))
+		return spec.options;
+
+	const chosen = new Set(jobs.map((node) => node.operation).filter((value) => value !== undefined));
+
+	return spec.options.filter((option) => {
+
+		if (chosen.has(option))
+			return true;
+
+		if (CLOSED_ONLY.includes(option))
+			return outlines.every((outline) => outline.closed > 0);
+
+		if (OPEN_ONLY.includes(option))
+			return outlines.every((outline) => outline.open > 0);
+
+		return true;
+	});
+}
+
+
+export function inspectorLayout(project, ids) {
+
+	const { document } = project;
 	const nodes = ids.map((id) => document.nodes[id]).filter((node) => node !== undefined);
 
 	if (nodes.length === 0)
@@ -175,7 +232,7 @@ export function inspectorLayout(document, ids) {
 			fields: group.fields
 				.filter((field) => nodes.every((node) => fieldsOf(node.type)[field] !== undefined))
 				.filter((field) => shadowsWithin(document, nodes, field, index) === false)
-				.map((field) => describe(document, nodes, field, index)),
+				.map((field) => describe(project, nodes, field, index)),
 		}))
 		.filter((group) => group.fields.length > 0);
 
@@ -264,8 +321,9 @@ function mixedTypeGroups(nodes) {
  * @param {Map} index - a prebuilt parent index
  * @returns {InspectorField} what to draw
  */
-function describe(document, nodes, field, index) {
+function describe(project, nodes, field, index) {
 
+	const { document } = project;
 	const resolved = nodes.map((node) => resolveField(document, node.id, field, index));
 	const [first] = resolved;
 	const agree = resolved.every((each) => same(each.value, first.value));
@@ -273,7 +331,7 @@ function describe(document, nodes, field, index) {
 
 	return {
 		field,
-		spec: first.spec,
+		spec: { ...first.spec, options: optionsFor(project, nodes, field, first.spec) },
 		value: agree ? first.value : MIXED,
 		source: sameSource ? first.source : 'mixed',
 		from: sameSource ? first.from : null,

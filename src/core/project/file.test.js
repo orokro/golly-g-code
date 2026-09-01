@@ -40,7 +40,7 @@ function fixture() {
 	const tool = put(folderOf(document, FolderRole.JOBS).id,
 		createNode(NodeType.TOOL, { name: '1/8 flat' }, { newId }));
 	const job = put(tool.id, createNode(NodeType.JOB,
-		{ name: 'Skyline', paths: [path.id], cutDepth: 5 }, { newId }));
+		{ name: 'Skyline', source: [path.id], cutDepth: 5 }, { newId }));
 	put(job.id, createNode(NodeType.TAB, { name: 'Tab 1', position: 20 }, { newId }));
 
 	project.geometry = { g1: [[0, 0], [10, 0], [10, 10]] };

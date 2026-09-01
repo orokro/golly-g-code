@@ -38,6 +38,7 @@ import { Operation } from '../cam/operations.js';
 import { OpenMode } from '../cam/openOffset.js';
 import { parentIndex, childrenOf, cuttingOrder, folderOf } from './tree.js';
 import { resolvedValues } from './inherit.js';
+import { outlineOf } from './jobs.js';
 
 /** How much attention a diagnostic deserves. */
 export const Level = Object.freeze({
@@ -63,10 +64,10 @@ export const DepthClass = Object.freeze({
 export const DEPTH_EPSILON = 0.001;
 
 /** Operations that need a closed path to mean anything. */
-const CLOSED_ONLY = Object.freeze([Operation.INSIDE, Operation.OUTSIDE, Operation.POCKET]);
+export const CLOSED_ONLY = Object.freeze([Operation.INSIDE, Operation.OUTSIDE, Operation.POCKET]);
 
 /** Operations that only exist because an open path has no inside or outside. */
-const OPEN_ONLY = Object.freeze([OpenMode.NORMAL, OpenMode.HEADING]);
+export const OPEN_ONLY = Object.freeze([OpenMode.NORMAL, OpenMode.HEADING]);
 
 
 /**
@@ -167,9 +168,9 @@ export function diagnose(project) {
 			say(tool.id, Level.ERROR, 'tool-stepover',
 				`${tool.name}'s stepover must be more than 0 and at most 1.`);
 
-		if (j.paths.length === 0)
+		if (outlineOf(project, job.id).total === 0)
 			say(job.id, Level.ERROR, 'job-empty',
-				`${job.name} has no paths, so there is nothing to cut.`);
+				`${job.name} has no outline, so there is nothing to cut.`);
 
 		if (!(j.cutDepth > 0))
 			say(job.id, Level.ERROR, 'job-depth',
@@ -190,7 +191,7 @@ export function diagnose(project) {
 					+ ` ${mm(project_.zTravel)}.`);
 		}
 
-		checkOperation(say, document, job, j);
+		checkOperation(say, project, job, j);
 
 		for (const tab of childrenOf(document, job.id)) {
 
@@ -271,15 +272,19 @@ function describeDepth(say, job, j, p) {
  * for some of a mixed selection is a warning, because the rest will still cut.
  *
  * @param {Function} say - records a diagnostic
- * @param {Object} document - the project document
+ * @param {Object} project - `{ document, geometry }`, for the job's own outline
  * @param {Object} job - the job node
  * @param {Object} j - the job's resolved values
  */
-function checkOperation(say, document, job, j) {
+function checkOperation(say, project, job, j) {
 
-	const paths = j.paths.map((id) => document.nodes[id]).filter((node) => node !== undefined);
+	// Counted from the SUBPATHS of the job's own outline, not from a stored flag
+	// on the path it came from. The flag is an aggregate — true only when every
+	// subpath is closed — so a shape holding a square and a loose line reported
+	// "not closed" while having a perfectly good ring in it to cut round.
+	const outline = outlineOf(project, job.id);
 
-	if (paths.length === 0)
+	if (outline.total === 0)
 		return;
 
 	const closedOnly = CLOSED_ONLY.includes(j.operation);
@@ -288,16 +293,16 @@ function checkOperation(say, document, job, j) {
 	if (closedOnly === false && openOnly === false)
 		return;
 
-	const wrong = paths.filter((path) => (closedOnly ? path.closed !== true : path.closed === true));
+	const wrong = closedOnly ? outline.open : outline.closed;
 
-	if (wrong.length === 0)
+	if (wrong === 0)
 		return;
 
 	const need = closedOnly ? 'closed' : 'open';
-	const level = wrong.length === paths.length ? Level.ERROR : Level.WARNING;
-	const which = wrong.length === paths.length
-		? `its ${paths.length === 1 ? 'path is' : 'paths are'} not`
-		: `${wrong.length} of its ${paths.length} paths are not`;
+	const level = wrong === outline.total ? Level.ERROR : Level.WARNING;
+	const which = wrong === outline.total
+		? `its ${outline.total === 1 ? 'outline is' : 'outlines are'} not`
+		: `${wrong} of its ${outline.total} outlines are not`;
 
 	say(job.id, level, 'operation-mismatch',
 		`${job.name} is set to "${j.operation}", which needs a ${need} path, but ${which}.`);

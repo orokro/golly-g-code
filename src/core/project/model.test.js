@@ -39,8 +39,8 @@ function fixture() {
 	const closed = put(doc.id, createNode(NodeType.SVG_PATH, { name: 'plate', closed: true }, { newId }));
 
 	const tool = put(jobs.id, createNode(NodeType.TOOL, { name: '1/8 flat' }, { newId }));
-	const a = put(tool.id, createNode(NodeType.JOB, { name: 'Skyline', paths: [open.id] }, { newId }));
-	const b = put(tool.id, createNode(NodeType.JOB, { name: 'Plate', paths: [closed.id] }, { newId }));
+	const a = put(tool.id, createNode(NodeType.JOB, { name: 'Skyline', source: [open.id] }, { newId }));
+	const b = put(tool.id, createNode(NodeType.JOB, { name: 'Plate', source: [closed.id] }, { newId }));
 	const tab = put(a.id, createNode(NodeType.TAB, { name: 'Tab 1', position: 20 }, { newId }));
 
 	const named = { jobs, svgs, doc, open, closed, tool, a, b, tab, root: document.nodes[document.root] };
@@ -288,8 +288,8 @@ describe('checking the shape', () => {
 	});
 
 	it('catches a dangling reference to a deleted path', () => {
-		expect(after((d, n) => { d.nodes[n.a.id].paths = ['gone']; })[0])
-			.toMatch(/refers to "gone" in paths/);
+		expect(after((d, n) => { d.nodes[n.a.id].source = ['gone']; })[0])
+			.toMatch(/refers to "gone" in source/);
 	});
 
 	it('catches a selection pointing at nothing', () => {

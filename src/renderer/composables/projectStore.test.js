@@ -6,12 +6,31 @@ import { createProject } from '@core/project/document.js';
 import { folderOf } from '@core/project/tree.js';
 import { Source } from '@core/project/inherit.js';
 import { Level } from '@core/project/diagnostics.js';
+import { prepareJob } from '@core/project/jobs.js';
+import { normalizePathData } from '@core/path/normalize.js';
 import { setField, addNode, removeNode, moveNode, clearOverride } from '@core/project/commands.js';
 
 import { createProjectStore } from './projectStore.js';
 
 /** Deterministic ids. The prefix keeps two fixtures from minting the same ones. */
 const counter = (prefix = 'n') => { let n = 0; return () => `${prefix}${(n += 1)}`; };
+
+/**
+ * A job owning a copy of some paths' outlines, with its geometry stored.
+ *
+ * @param {Object} project - `{ document, geometry }`
+ * @param {String[]} pathIds - the SvgPath nodes to copy from
+ * @param {Object} options - forwarded to `prepareJob`
+ * @returns {Object} the job node, not yet in the tree
+ */
+function makeJob(project, pathIds, options) {
+
+	const made = prepareJob(project, pathIds, options);
+
+	Object.assign(project.geometry, made.geometry);
+
+	return made.job;
+}
 
 /**
  * A store over a project with a tool, two jobs and a path.
@@ -32,14 +51,22 @@ function fixture(prefix = 'n') {
 
 	const doc = put(folderOf(document, FolderRole.SVGS).id,
 		createNode(NodeType.SVG_DOC, { name: 'a.svg' }, { newId }));
-	const path = put(doc.id, createNode(NodeType.SVG_PATH, { name: 'line', closed: false }, { newId }));
+	const path = put(doc.id, createNode(NodeType.SVG_PATH,
+		{ name: 'line', closed: false, geometry: `${prefix}-line` }, { newId }));
+
+	// a real open outline, because the diagnostics tests below turn on whether a
+	// job's own outline is open or closed rather than on a flag
+	project.geometry[`${prefix}-line`] = { subPaths: normalizePathData('M0 0 L10 0 L10 10').subPaths };
 
 	const tool = put(folderOf(document, FolderRole.JOBS).id,
 		createNode(NodeType.TOOL, { name: 'Bit' }, { newId }));
 	const spare = put(folderOf(document, FolderRole.JOBS).id,
 		createNode(NodeType.TOOL, { name: 'Other' }, { newId }));
-	const a = put(tool.id, createNode(NodeType.JOB, { name: 'A', paths: [path.id] }, { newId }));
-	const b = put(tool.id, createNode(NodeType.JOB, { name: 'B', paths: [path.id] }, { newId }));
+
+	// through `prepareJob`, the way the application makes a job: each one owns a
+	// copy of the outline and records the path it came from
+	const a = put(tool.id, makeJob(project, [path.id], { newId, name: 'A' }));
+	const b = put(tool.id, makeJob(project, [path.id], { newId, name: 'B' }));
 
 	// verify is on by default under vitest, which is the point of it
 	const store = createProjectStore({ project });

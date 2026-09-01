@@ -105,7 +105,7 @@ export function generateJobToolpath(project, jobId, options = {}) {
 	/** @type {String[]} */
 	const warnings = [];
 
-	const runs = gather(project, j.paths, tolerance, warnings);
+	const runs = gather(project, jobId, tolerance, warnings);
 	const closed = runs.filter((run) => run.closed).map((run) => run.points);
 	const open = runs.filter((run) => run.closed === false).map((run) => run.points);
 
@@ -144,7 +144,7 @@ export function generateJobToolpath(project, jobId, options = {}) {
 
 
 /**
- * Collects a job's source geometry, flattened, one entry per SUBPATH.
+ * Collects a job's OWN geometry, flattened, one entry per SUBPATH.
  *
  * Per subpath rather than per shape, and using each subpath's OWN closed flag
  * rather than the node's. The node's flag is an aggregate — true only when every
@@ -156,39 +156,41 @@ export function generateJobToolpath(project, jobId, options = {}) {
  * The closed runs still travel together into `generateToolpath`, because which
  * contour is a hole is a property of the SET (see import.js).
  *
+ * The job's own, not the drawing's. A job copies the outline when it is made
+ * (see jobs.js) and is a first-class object from then on — so this reads the
+ * job's geometry and the job's placement, and never looks at the SvgPath it came
+ * from. Hiding, moving or deleting that path changes nothing here.
+ *
  * @param {Object} project - the project
- * @param {String[]} pathIds - the job's `paths`
+ * @param {String} jobId - the job
  * @param {Number} tolerance - flattening tolerance
  * @param {String[]} warnings - collected here
  * @returns {Object[]} `{ id, closed, points }` per subpath
  */
-function gather(project, pathIds, tolerance, warnings) {
+function gather(project, jobId, tolerance, warnings) {
 
 	/** @type {Object[]} */
 	const runs = [];
 
-	for (const id of pathIds ?? []) {
+	const node = project.document.nodes[jobId];
+	const geometry = project.geometry?.[node?.geometry];
 
-		const node = project.document.nodes[id];
-		const geometry = project.geometry?.[node?.geometry];
-
-		if (geometry === undefined) {
-			warnings.push(`The geometry for "${node?.name ?? id}" is missing.`);
-			continue;
-		}
-
-		// Where the shape SITS is a property of the node, not of the stored path
-		// data (see placement.js). This is the only place in the core that reads
-		// geometry for cutting, which is what keeps that from being a trap.
-		const matrix = matrixFor(project, id);
-		const place = isIdentity(matrix)
-			? (points) => points
-			: (points) => points.map((point) => apply(matrix, point));
-
-		for (const sub of flattenSubPaths(geometry.subPaths, { tolerance }))
-			if (sub.points.length > 1)
-				runs.push({ id, closed: sub.closed === true, points: place(sub.points) });
+	if (geometry === undefined) {
+		warnings.push(`${node?.name ?? jobId} has no outline of its own to cut.`);
+		return runs;
 	}
+
+	// Where the job SITS is a property of the node, not of the stored path data
+	// (see placement.js). This is the only place in the core that reads geometry
+	// for cutting, which is what keeps that from being a trap.
+	const matrix = matrixFor(project, jobId);
+	const place = isIdentity(matrix)
+		? (points) => points
+		: (points) => points.map((point) => apply(matrix, point));
+
+	for (const sub of flattenSubPaths(geometry.subPaths, { tolerance }))
+		if (sub.points.length > 1)
+			runs.push({ id: jobId, closed: sub.closed === true, points: place(sub.points) });
 
 	return runs;
 }

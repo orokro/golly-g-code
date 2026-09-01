@@ -86,7 +86,8 @@
 
 				<!-- the drawing itself, a hairline at any zoom -->
 				<path v-for="shape in shapes" :key="shape.id" class="shape" :d="shape.d"
-					:class="{ selected: selectedIds.includes(shape.id) }" :transform="shape.transform"
+					:class="{ selected: selectedIds.includes(shape.id), job: shape.job }"
+					:transform="shape.transform"
 					fill="none" stroke-width="1" vector-effect="non-scaling-stroke"/>
 
 				<!-- a fat transparent stroke, so a hairline is still clickable -->
@@ -283,9 +284,15 @@ const shapes = computed(() => {
 
 	const found = [];
 
+	// Jobs as well as drawing paths. A job owns its outline (jobs.js), so hiding
+	// the SVG and working with the job is the whole point of that decision — and
+	// a job you cannot see is a job you cannot select or drag.
 	for (const node of Object.values(store.document.nodes)) {
 
-		if (node.type !== NodeType.SVG_PATH || isVisible(store.document, node.id) === false)
+		if (node.type !== NodeType.SVG_PATH && node.type !== NodeType.JOB)
+			continue;
+
+		if (isVisible(store.document, node.id) === false)
 			continue;
 
 		const geometry = store.project.geometry[node.geometry];
@@ -301,6 +308,7 @@ const shapes = computed(() => {
 
 		found.push({
 			id: node.id,
+			job: node.type === NodeType.JOB,
 			d: pathData(geometry.subPaths),
 			transform: svgTransform(matrix),
 			bounds: transformBounds(boundsOf(geometry.subPaths), matrix),
@@ -886,6 +894,12 @@ defineExpose({ view, zoomToFit, toWorld: (x, y) => toWorld(view.value, x, y) });
 		stroke-dasharray: 2 4;
 		opacity: 0.55;
 		pointer-events: none;
+	}
+
+	/* a job's own outline, so it reads as the object rather than as artwork */
+	.shape.job {
+		stroke: var(--gg-cut);
+		opacity: 0.75;
 	}
 
 	.shape.selected {

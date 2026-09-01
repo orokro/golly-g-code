@@ -322,11 +322,39 @@ export const FIELDS = Object.freeze({
 
 		...COMMON,
 
-		paths: {
-			label: 'Paths',
-			desc: 'The artwork this job cuts. A live reference, so editing the path'
-				+ ' changes the cut rather than leaving a copy behind.',
+		// A job OWNS its outline. `Create job from path` copies the geometry and
+		// takes on the path's placement, so the job appears exactly where the path
+		// was and is then a thing in its own right: hide the drawing, delete it,
+		// re-import it at another resolution, and the job is untouched.
+		//
+		// The SVG is for getting shapes in. The job is the object you work with.
+		geometry: {
+			label: 'Geometry', desc: 'Id of this job’s own outline, which lives outside the document.',
+			kind: Kind.TEXT, quantity: Quantity.NONE, default: '',
+		},
+
+		// Provenance, not a link. Nothing reads this to cut with; it is here so the
+		// outliner can say where a job came from and so an explicit "update from
+		// source" has something to aim at later.
+		source: {
+			label: 'Made from', desc: 'The paths this job was created from. A record, not a live link.',
 			kind: Kind.REFERENCES, quantity: Quantity.NONE, default: [],
+		},
+
+		offset: {
+			label: 'Position', desc: 'Where this job sits on the bed.',
+			kind: Kind.VECTOR2, quantity: Quantity.LENGTH, default: { x: 0, y: 0 },
+		},
+
+		rotation: {
+			label: 'Rotation', desc: 'How far round it is turned, about its own centre.',
+			kind: Kind.NUMBER, quantity: Quantity.ANGLE,
+			default: 0, min: -Math.PI * 2, max: Math.PI * 2, step: Math.PI / 180,
+		},
+
+		scale: {
+			label: 'Scale', desc: 'How much bigger or smaller than the drawing it was made from.',
+			kind: Kind.VECTOR2, quantity: Quantity.NONE, default: { x: 1, y: 1 },
 		},
 
 		operation: {

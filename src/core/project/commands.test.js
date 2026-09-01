@@ -40,8 +40,8 @@ function fixture() {
 
 	const tool = put(jobs.id, createNode(NodeType.TOOL, { name: '1/8 flat' }, { newId }));
 	const spare = put(jobs.id, createNode(NodeType.TOOL, { name: '1/4 flat', diameter: 6.35 }, { newId }));
-	const a = put(tool.id, createNode(NodeType.JOB, { name: 'Skyline', paths: [open.id] }, { newId }));
-	const b = put(tool.id, createNode(NodeType.JOB, { name: 'Plate', paths: [closed.id] }, { newId }));
+	const a = put(tool.id, createNode(NodeType.JOB, { name: 'Skyline', source: [open.id] }, { newId }));
+	const b = put(tool.id, createNode(NodeType.JOB, { name: 'Plate', source: [closed.id] }, { newId }));
 	const tab = put(a.id, createNode(NodeType.TAB, { name: 'Tab 1', position: 20 }, { newId }));
 
 	// verify on: every dispatch checks that the command changed only what it
@@ -184,20 +184,20 @@ describe('adding and removing', () => {
 	});
 
 	it('cleans up references to what it deleted, and says that it will', () => {
-		// the subtle one. Deleting a path writes to the JOB that cut it, which is
-		// outside the deleted subtree -- so the job has to be in touches. Getting
-		// this wrong is caught by verify, which is how it was found
+		// the subtle one. Deleting a path writes to the JOB that records it as a
+		// source, which is outside the deleted subtree -- so the job has to be in
+		// touches. Getting this wrong is caught by verify, which is how it was found
 		const { document, h, n } = fixture();
 
 		const command = removeNode(document, n.open.id);
 		expect(command.touches).toContain(n.a.id);
 
 		h.dispatch(document, command);
-		expect(document.nodes[n.a.id].paths).toEqual([]);
+		expect(document.nodes[n.a.id].source).toEqual([]);
 		expect(validateTree(document)).toEqual([]);
 
 		h.undo(document);
-		expect(document.nodes[n.a.id].paths).toEqual([n.open.id]);
+		expect(document.nodes[n.a.id].source).toEqual([n.open.id]);
 	});
 
 	it('does not leave the selection pointing at something deleted', () => {
@@ -266,17 +266,17 @@ describe('references', () => {
 	it('points a job at other paths, and undoes', () => {
 		const { document, h, n } = fixture();
 
-		h.dispatch(document, setReferences(document, n.a.id, 'paths', [n.open.id, n.closed.id]));
-		expect(document.nodes[n.a.id].paths).toHaveLength(2);
+		h.dispatch(document, setReferences(document, n.a.id, 'source', [n.open.id, n.closed.id]));
+		expect(document.nodes[n.a.id].source).toHaveLength(2);
 
 		h.undo(document);
-		expect(document.nodes[n.a.id].paths).toEqual([n.open.id]);
+		expect(document.nodes[n.a.id].source).toEqual([n.open.id]);
 	});
 
 	it('refuses to point at something that is not there', () => {
 		const { document, n } = fixture();
 
-		expect(() => setReferences(document, n.a.id, 'paths', ['ghost'])).toThrow(/not in the document/);
+		expect(() => setReferences(document, n.a.id, 'source', ['ghost'])).toThrow(/not in the document/);
 	});
 
 	it('refuses a field that is not a reference list', () => {
@@ -323,14 +323,15 @@ describe('a session of random project edits', () => {
 		const roll = rand();
 
 		// Deleting a PATH is the case that makes a command write outside its own
-		// subtree, because every job cutting it has to lose the reference. Left
-		// out of the first version of this, and the result was that dropping the
-		// referrers from `touches` failed exactly one hand-written test.
+		// subtree, because every job naming it as a source has to lose the
+		// reference. Left out of the first version of this, and the result was
+		// that dropping the referrers from `touches` failed exactly one
+		// hand-written test.
 		if (roll < 0.08 && paths.length > 1)
 			return removeNode(document, pick(paths));
 
 		if (roll < 0.16 && jobs.length > 0 && paths.length > 0)
-			return setReferences(document, pick(jobs), 'paths',
+			return setReferences(document, pick(jobs), 'source',
 				paths.filter(() => rand() < 0.6));
 
 		if (roll < 0.25 && tools.length > 0)

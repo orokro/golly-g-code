@@ -7,6 +7,8 @@ import { createHistory } from '@core/project/history.js';
 import { nodeDriver } from '@core/project/snapshot.js';
 import { moveNode } from '@core/project/commands.js';
 import { diagnose, byNode } from '@core/project/diagnostics.js';
+import { prepareJob } from '@core/project/jobs.js';
+import { normalizePathData } from '@core/path/normalize.js';
 
 import {
 	Drop, SPLIT_FRACTION, flattenTree, canDropInto, resolveDrop,
@@ -15,6 +17,23 @@ import {
 
 /** Deterministic ids. */
 const counter = () => { let k = 0; return () => `n${(k += 1)}`; };
+
+/**
+ * A job owning a copy of some paths' outlines, with its geometry stored.
+ *
+ * @param {Object} project - `{ document, geometry }`
+ * @param {String[]} pathIds - the SvgPath nodes to copy from
+ * @param {Object} options - forwarded to `prepareJob`
+ * @returns {Object} the job node, not yet in the tree
+ */
+function makeJob(project, pathIds, options) {
+
+	const made = prepareJob(project, pathIds, options);
+
+	Object.assign(project.geometry, made.geometry);
+
+	return made.job;
+}
 
 /**
  * A project with two tools, three jobs, a tab, and an SVG with two paths.
@@ -37,14 +56,22 @@ function fixture() {
 	const refs = folderOf(document, FolderRole.REFERENCES);
 
 	const doc = put(svgs.id, createNode(NodeType.SVG_DOC, { name: 'a.svg' }, { newId }));
-	const p1 = put(doc.id, createNode(NodeType.SVG_PATH, { name: 'p1', closed: true }, { newId }));
-	const p2 = put(doc.id, createNode(NodeType.SVG_PATH, { name: 'p2', closed: false }, { newId }));
+	const p1 = put(doc.id, createNode(NodeType.SVG_PATH,
+		{ name: 'p1', closed: true, geometry: 'g-p1' }, { newId }));
+	const p2 = put(doc.id, createNode(NodeType.SVG_PATH,
+		{ name: 'p2', closed: false, geometry: 'g-p2' }, { newId }));
+
+	// real outlines, so the jobs copied from them have something to cut. A job
+	// with an empty outline is an ERROR, and that extra sentence would land in the
+	// row tooltips these tests read
+	project.geometry['g-p1'] = { subPaths: normalizePathData('M0 0 L10 0 L10 10 Z').subPaths };
+	project.geometry['g-p2'] = { subPaths: normalizePathData('M0 0 L10 0 L10 10').subPaths };
 
 	const tool = put(jobs.id, createNode(NodeType.TOOL, { name: 'T1' }, { newId }));
 	const spare = put(jobs.id, createNode(NodeType.TOOL, { name: 'T2' }, { newId }));
-	const a = put(tool.id, createNode(NodeType.JOB, { name: 'A', paths: [p1.id], cutDepth: 1 }, { newId }));
-	const b = put(tool.id, createNode(NodeType.JOB, { name: 'B', paths: [p1.id], cutDepth: 5 }, { newId }));
-	const c = put(spare.id, createNode(NodeType.JOB, { name: 'C', paths: [p1.id] }, { newId }));
+	const a = put(tool.id, makeJob(project, [p1.id], { newId, name: 'A', fields: { cutDepth: 1 } }));
+	const b = put(tool.id, makeJob(project, [p1.id], { newId, name: 'B', fields: { cutDepth: 5 } }));
+	const c = put(spare.id, makeJob(project, [p1.id], { newId, name: 'C' }));
 	const tab = put(a.id, createNode(NodeType.TAB, { name: 'Tab', position: 5 }, { newId }));
 
 	return { project, document, n: { jobs, svgs, refs, doc, p1, p2, tool, spare, a, b, c, tab } };

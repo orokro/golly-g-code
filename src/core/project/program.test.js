@@ -15,6 +15,7 @@ import { NodeType, FolderRole, createNode } from './nodes.js';
 import { createProject } from './document.js';
 import { folderOf } from './tree.js';
 import { prepareSvgImport } from './import.js';
+import { prepareJob } from './jobs.js';
 import { buildPlan, generateProgram, mapBlocks } from './program.js';
 import { parseGCode } from '../post/parse.js';
 
@@ -33,8 +34,9 @@ const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="200mm
  * A project with that drawing imported, and one tool group per job description.
  *
  * @param {Array<Object>} [jobs] - `{ paths, tabs, ...fields }` per job; `paths`
- *   names shapes, `tabs` is an array of tab field objects, `tool` is fields for
- *   the tool group it goes in. Each entry gets its own tool group
+ *   names the shapes the job's outline is COPIED from, `tabs` is an array of tab
+ *   field objects, `tool` is fields for the tool group it goes in. Each entry
+ *   gets its own tool group
  * @param {Object} [settings] - fields for the Project node
  * @returns {Object} `{ project, ids }` where ids maps job name to node id
  */
@@ -67,12 +69,18 @@ function fixture(jobs = [{}], settings = {}) {
 		const { paths = ['square'], tabs = [], tool: toolFields = {}, ...fields } = spec;
 
 		const tool = createNode(NodeType.TOOL, { name: `Bit ${index + 1}`, ...toolFields }, { newId });
-		const job = createNode(NodeType.JOB, {
+
+		// through `prepareJob`, because that is how the application makes a job:
+		// the outline is copied into the job and the geometry it returns is merged
+		// into the side store
+		const made = prepareJob(project, paths.map((name) => byName[name]), {
+			newId,
 			name: fields.name ?? `Cut ${index + 1}`,
-			cutDepth: 1,
-			...fields,
-			paths: paths.map((name) => byName[name]),
-		}, { newId });
+			fields: { cutDepth: 1, ...fields },
+		});
+		const job = made.job;
+
+		Object.assign(project.geometry, made.geometry);
 
 		tool.children = [job.id];
 		job.children = tabs.map((tabFields) => {

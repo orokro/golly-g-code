@@ -83,7 +83,7 @@ function fixture(answers = {}) {
 	const path = put(doc.id, createNode(NodeType.SVG_PATH, { name: 'line', closed: false }, { newId }));
 	const tool = put(folderOf(document, FolderRole.JOBS).id,
 		createNode(NodeType.TOOL, { name: 'Bit' }, { newId }));
-	const job = put(tool.id, createNode(NodeType.JOB, { name: 'Cut', paths: [path.id] }, { newId }));
+	const job = put(tool.id, createNode(NodeType.JOB, { name: 'Cut', source: [path.id] }, { newId }));
 
 	const store = createProjectStore({ project });
 	const api = fakeApi(answers);

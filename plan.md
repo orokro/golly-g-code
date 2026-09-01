@@ -977,6 +977,53 @@ being freed), detail finer than the bit, a pass depth larger than the cut depth.
 
 ---
 
+## Phase 3.7 — Jobs are first-class objects
+
+Greg, after driving it: *"The SVG is for importing shapes, the jobs are the first
+class objects."* The old model had a Job REFERENCE the SvgPaths it cut, so
+selecting a job gave you no gizmo, and moving the drawing dragged the cut around
+with it. That is backwards.
+
+- [x] **A job owns a copy of its outline.** `Create job from path` copies the
+  geometry and takes on the path's placement, so the job appears exactly where
+  the path was and is a thing in its own right from then on. Hide the drawing,
+  move it, scale it, delete the whole SVG — the job cuts exactly what it cut
+  before, and there is a test for each of those four
+- [x] The copy is VERBATIM — arcs stay arcs. What moves across is the placement,
+  decomposed out of the path's composed matrix into the job's own three fields.
+  Baking the matrix into the points was the alternative and is worse for one
+  specific reason: an arc under a non-uniform scale is an ellipse, which the
+  geometry format cannot hold, so baking would mean flattening every curve at
+  whatever tolerance happened to apply that day
+- [x] Deep copy, by hand. A shallow one passes every other test in the file and
+  then quietly lets an edit to the drawing reach into the job's geometry
+- [x] `source` records which paths a job came from. Provenance, not a link —
+  nothing reads it to cut with, and it is what an explicit "update from source"
+  would aim at later
+- [x] The cost, stated: fixing the artwork no longer fixes the job
+- [x] Jobs are drawn in the workspace and take the gizmo, because a job you
+  cannot see is a job you cannot select or drag
+- [x] **The operation list offers only what the outline can do.** Greg's second
+  report: an open path was cheerfully offered inside, outside and pocket, and
+  picking one produced an error diagnostic and no toolpath. A list of things that
+  do not work is the wrong place to find that out. The current value always stays
+  in the list even when it is no longer possible — a select showing nothing is
+  worse than one showing the wrong thing
+- [x] Open/closed is now counted from the job's own SUBPATHS rather than from an
+  aggregate flag on the drawing. The flag was true only when EVERY subpath was
+  closed, so a shape holding a square and a loose line reported "not closed"
+  while having a perfectly good ring in it
+- [x] Found while wiring it: `outlineOf(project_, …)` was handed the project
+  NODE's resolved field values instead of the project. One underscore, and it
+  threw on every project with a job in it
+- [x] Found while wiring it: an edit that inserted the operation filter never
+  applied at all, because the patch used a replace without asserting its anchor
+  matched. The import it needed landed; the function did not. Exactly the silent
+  failure the conventions exist to prevent, committed by the person who wrote
+  them
+
+---
+
 ## Phase 4 — Workspace (SVG/DOM)
 
 - [x] Root `<svg>` with pan/zoom via a transform on a root `<g>`; zoom to fit
