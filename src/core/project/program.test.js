@@ -27,6 +27,9 @@ const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="200mm
 	+ ' viewBox="0 0 200 200">'
 	+ '<rect id="square" x="20" y="20" width="60" height="60"/>'
 	+ '<path id="zigzag" d="M100 20 L130 50 L160 20"/>'
+	// An L, deliberately asymmetric: it survives no flip, no quarter turn and no
+	// shear unnoticed. Every other shape in this file is a square or a chevron.
+	+ '<path id="corner" d="M10 190 L110 190 L110 140"/>'
 	+ '</svg>';
 
 
@@ -612,5 +615,66 @@ describe('the travel between cuts', () => {
 		const f = fixture([{ operation: 'outside' }]);
 		const blocking = [{ nodeId: 'x', level: 'error', code: 'test', message: 'nope' }];
 		expect(generateProgram(f.project, { diagnostics: blocking }).travel).toEqual([]);
+	});
+});
+
+
+describe('the emitted file traces the drawing, in the right orientation', () => {
+
+	it('puts the cutter on the exact points the drawing named', () => {
+
+		// ---------------------------------------------------------------------
+		// This closes a real hole. Every other test in this file measures a 60mm
+		// SQUARE — which is symmetric under a Y flip, under a quarter turn, and
+		// under a 180 degree turn. A pipeline that mirrored or rotated everything
+		// it emitted would have passed all of them, and the first anyone would
+		// know is a part cut backwards.
+		//
+		// The L below is asymmetric in both axes. The expected coordinates are
+		// worked out by hand from the SVG rather than from our own geometry, so
+		// this compares the file against the DRAWING and not against ourselves:
+		// the document is 200mm tall and SVG's y grows downward, so the SVG's
+		// (10,190) is the document's (10,10).
+		// ---------------------------------------------------------------------
+		const f = fixture([{
+			paths: ['corner'], operation: 'center', ramp: false, cutDepth: 1, passDepth: 1,
+		}]);
+
+		const cuts = cutting(movesOf(generateProgram(f.project).text));
+		const seen = [[cuts[0].from.x, cuts[0].from.y], ...cuts.map((m) => [m.to.x, m.to.y])];
+
+		expect(seen.map(([x, y]) => [Number(x.toFixed(6)), Number(y.toFixed(6))]))
+			.toEqual([[10, 10], [110, 10], [110, 60]]);
+	});
+
+	it('keeps that orientation once the work zero moves', () => {
+
+		// The puck shifts the whole program; it must not turn it.
+		const f = fixture([{
+			paths: ['corner'], operation: 'center', ramp: false, cutDepth: 1, passDepth: 1,
+		}], { workZero: { x: 4, y: 7 } });
+
+		const cuts = cutting(movesOf(generateProgram(f.project).text));
+		const seen = [[cuts[0].from.x, cuts[0].from.y], ...cuts.map((m) => [m.to.x, m.to.y])];
+
+		expect(seen.map(([x, y]) => [Number(x.toFixed(6)), Number(y.toFixed(6))]))
+			.toEqual([[6, 3], [106, 3], [106, 53]]);
+	});
+
+	it('does not mirror the drawing in Y', () => {
+
+		// Stated on its own because it is the failure that looks most nearly
+		// right: a mirrored skyline is still a skyline. The L's tall leg is on the
+		// RIGHT and rises, and both of those have to survive.
+		const f = fixture([{
+			paths: ['corner'], operation: 'center', ramp: false, cutDepth: 1, passDepth: 1,
+		}]);
+
+		const cuts = cutting(movesOf(generateProgram(f.project).text));
+		const last = cuts.at(-1).to;
+		const first = cuts[0].from;
+
+		expect(last.x).toBeGreaterThan(first.x);
+		expect(last.y).toBeGreaterThan(first.y);
 	});
 });
