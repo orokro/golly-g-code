@@ -39,6 +39,7 @@ import { OpenMode } from '../cam/openOffset.js';
 import { parentIndex, childrenOf, cuttingOrder, folderOf } from './tree.js';
 import { resolvedValues } from './inherit.js';
 import { outlineOf } from './jobs.js';
+import { localBounds, matrixFor, transformBounds } from './placement.js';
 
 /** How much attention a diagnostic deserves. */
 export const Level = Object.freeze({
@@ -192,6 +193,7 @@ export function diagnose(project) {
 		}
 
 		checkOperation(say, project, job, j);
+		checkEnvelope(say, project, project_, job, j, t);
 
 		for (const tab of childrenOf(document, job.id)) {
 
@@ -385,4 +387,105 @@ export function byNode(diagnostics) {
 		grouped.set(diagnostic.nodeId, [...(grouped.get(diagnostic.nodeId) ?? []), diagnostic]);
 
 	return grouped;
+}
+
+
+/**
+ * Warns when a job would send the cutter off the bed.
+ *
+ * ---------------------------------------------------------------------------
+ * In DOCUMENT coordinates, not machine ones
+ *
+ * The emitted file is measured from the work zero, so a program that runs to
+ * X-90 is completely normal — it only means the puck is not at the left-hand end
+ * of the part. Warning about negative numbers would cry wolf on almost every
+ * real job.
+ *
+ * The question that actually matters is whether the part fits on the BED, and
+ * that is asked in workspace coordinates where the bed is `0..workspaceWidth` by
+ * `0..workspaceHeight`. Moving the puck changes every number in the file and
+ * changes nothing about the answer.
+ * ---------------------------------------------------------------------------
+ *
+ * Measured from the job's own outline plus however far the toolpath reaches
+ * beyond it, rather than from the toolpath itself, because `diagnose` runs on
+ * every commit and generating toolpaths to answer this would be the expensive
+ * half of the pipeline run twice.
+ *
+ * @param {Function} say - records a diagnostic
+ * @param {Object} project - `{ document, geometry }`
+ * @param {Object} project_ - the project node's resolved values
+ * @param {Object} job - the job node
+ * @param {Object} j - the job's resolved values
+ * @param {Object} t - the tool's resolved values
+ */
+function checkEnvelope(say, project, project_, job, j, t) {
+
+	const box = transformBounds(localBounds(project, job.id), matrixFor(project, job.id));
+
+	if (box === null)
+		return;
+
+	const reach = reachOf(j, t);
+	const width = project_.workspaceWidth;
+	const height = project_.workspaceHeight;
+
+	/** @type {String[]} */
+	const off = [];
+
+	if (box.minX - reach < -DEPTH_EPSILON)
+		off.push(`${mm(reach - box.minX)} past the left edge`);
+
+	if (box.maxX + reach > width + DEPTH_EPSILON)
+		off.push(`${mm(box.maxX + reach - width)} past the right edge`);
+
+	if (box.minY - reach < -DEPTH_EPSILON)
+		off.push(`${mm(reach - box.minY)} past the front edge`);
+
+	if (box.maxY + reach > height + DEPTH_EPSILON)
+		off.push(`${mm(box.maxY + reach - height)} past the back edge`);
+
+	if (off.length === 0)
+		return;
+
+	say(job.id, Level.ERROR, 'off-bed',
+		`${job.name} runs off the ${mm(width)} × ${mm(height)} bed — ${off.join(', ')}.`
+		+ ' Move it, or change the workspace size in the project settings.',
+		{ box, reach, width, height });
+}
+
+
+/**
+ * How far a job's TOOL CENTRE reaches beyond the outline it was made from.
+ *
+ * The tool centre, deliberately, because that is what the machine's travel
+ * constrains. The cutter's outer edge overhanging the edge of the bed by a
+ * millimetre is cutting air; the spindle being asked to travel somewhere it
+ * cannot reach is an alarm or a crash. Measuring the kerf instead made a shape
+ * sitting neatly at the origin corner report itself as off the bed.
+ *
+ * Positive outwards. An inside cut and a pocket run within the outline, so they
+ * reach nothing at all.
+ *
+ * @param {Object} j - the job's resolved values
+ * @param {Object} t - the tool's resolved values
+ * @returns {Number} millimetres beyond the outline
+ */
+function reachOf(j, t) {
+
+	const radius = (t.diameter ?? 0) / 2;
+	const margin = Math.max(0, j.margin ?? 0);
+
+	if (j.operation === Operation.INSIDE || j.operation === Operation.POCKET)
+		return 0;
+
+	if (j.operation === Operation.OUTSIDE)
+		return radius + margin + Math.max(0, j.width ?? 0);
+
+	// the open-path offsets displace the whole path by the tool's radius
+	if (j.operation === OpenMode.NORMAL || j.operation === OpenMode.HEADING)
+		return radius + margin;
+
+	// centre and engrave: the tool centre follows the line itself
+	return margin;
 }

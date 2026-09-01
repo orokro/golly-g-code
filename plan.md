@@ -1206,6 +1206,26 @@ with it. That is backwards.
 - [x] Line ↔ job mapping, read back out of the `;<job name id>` breadcrumbs
   rather than counted while emitting, so the map cannot drift from the file
 
+### 5.1a Does it fit on the machine — done
+
+- [x] **Off-bed diagnostic.** `workspaceWidth` and `workspaceHeight` existed only
+  to draw the bed rectangle; nothing checked a job against them. Found while
+  measuring a real exported file, which ran to X-90
+- [x] Asked in DOCUMENT coordinates, not machine ones. A program that runs to
+  X-90 is completely normal — it only means the puck is not at the left-hand end
+  of the part — so warning about negative numbers would cry wolf on nearly every
+  real job. Moving the puck changes every number in the file and changes nothing
+  about whether the part fits on the bed
+- [x] Measures the TOOL CENTRE, not the cutter's edge, because that is what the
+  machine's travel constrains. The cutter overhanging the bed edge by a
+  millimetre is cutting air; the spindle being sent somewhere it cannot reach is
+  an alarm or a crash. The first version measured the kerf and reported a part
+  sitting neatly in the corner as off the bed
+- [x] Per operation: inside and pocket reach nothing beyond the outline, outside
+  reaches radius + margin + band, the open offsets reach the radius, centre and
+  engrave reach only the margin
+- [x] Names each edge it leaves and by how much, and blocks export
+
 ### 5.2 The G-code window — done, except Monaco
 
 - [x] **The staleness contract, which is the reason `useProgram` is not a

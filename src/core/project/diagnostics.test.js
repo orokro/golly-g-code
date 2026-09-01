@@ -347,3 +347,115 @@ describe('reporting', () => {
 		expect(diagnose(project)).toEqual([]);
 	});
 });
+
+
+describe('a job that runs off the bed', () => {
+
+	/**
+	 * A project with one job whose outline sits where it is put.
+	 *
+	 * @param {Object} [placement] - offset/scale for the job
+	 * @param {Object} [job] - fields for the job
+	 * @param {Object} [settings] - fields for the project node
+	 * @returns {Object} `{ project, jobId }`
+	 */
+	function placed(placement = {}, job = {}, settings = {}) {
+
+		const newId = counter();
+		const project = createProject({ newId });
+		const { document } = project;
+
+		Object.assign(document.nodes[document.root], settings);
+
+		// a 100 x 50 closed rectangle sitting at 100,100 on the bed
+		project.geometry.g1 = {
+			subPaths: [{
+				closed: true,
+				start: [100, 100],
+				segments: [
+					{ type: 'line', to: [100, 100] }, { type: 'line', to: [200, 100] },
+					{ type: 'line', to: [200, 150] }, { type: 'line', to: [100, 150] },
+					{ type: 'line', to: [100, 100] },
+				],
+			}],
+		};
+
+		const tool = createNode(NodeType.TOOL, { name: 'Bit' }, { newId });
+		const node = createNode(NodeType.JOB, {
+			name: 'Cut', geometry: 'g1', cutDepth: 1, operation: 'center', ...placement, ...job,
+		}, { newId });
+
+		tool.children = [node.id];
+		document.nodes[tool.id] = tool;
+		document.nodes[node.id] = node;
+		folderOf(document, FolderRole.JOBS).children.push(tool.id);
+
+		return { project, jobId: node.id };
+	}
+
+	/** The off-bed diagnostics for a project. */
+	const offBed = (f) => diagnose(f.project).filter((d) => d.code === 'off-bed');
+
+	it('says nothing about a part that fits', () => {
+		expect(offBed(placed())).toEqual([]);
+	});
+
+	it('catches one pushed off the right-hand edge, and says by how much', () => {
+		const f = placed({ offset: { x: 250, y: 0 } });
+		const found = offBed(f);
+
+		expect(found).toHaveLength(1);
+		expect(found[0].level).toBe(Level.ERROR);
+		expect(found[0].message).toMatch(/50(\.0+)?mm past the right edge/);
+	});
+
+	it('catches one pushed off the front, and names that edge', () => {
+		expect(offBed(placed({ offset: { x: 0, y: -150 } }))[0].message)
+			.toMatch(/past the front edge/);
+	});
+
+	it('reports every edge it leaves at once', () => {
+		const f = placed({ scale: { x: 8, y: 8 } });
+		const message = offBed(f)[0].message;
+		expect(message).toMatch(/left edge/);
+		expect(message).toMatch(/right edge/);
+	});
+
+	it('measures the TOOL CENTRE, not the cutter’s edge', () => {
+
+		// A shape whose edge sits exactly on the bed boundary is fine: the cutter
+		// overhanging by a millimetre is cutting air, where the spindle being sent
+		// somewhere it cannot reach is an alarm or a crash. Measuring the kerf made
+		// a part sitting neatly in the corner report itself as off the bed.
+		const f = placed({ offset: { x: -100, y: -100 } });
+		expect(offBed(f)).toEqual([]);
+	});
+
+	it('counts the tool radius on an OUTSIDE cut, because the path really does move', () => {
+		const f = placed({ offset: { x: -100, y: -100 } }, { operation: 'outside' });
+		expect(offBed(f)).toHaveLength(1);
+	});
+
+	it('counts nothing extra on an INSIDE cut, which runs within the outline', () => {
+		const f = placed({ offset: { x: -100, y: -100 } }, { operation: 'inside' });
+		expect(offBed(f)).toEqual([]);
+	});
+
+	it('follows the bed size, not a hard-coded 400', () => {
+		const f = placed({ offset: { x: 250, y: 0 } }, {}, { workspaceWidth: 1000 });
+		expect(offBed(f)).toEqual([]);
+	});
+
+	it('does not care where the work zero is', () => {
+
+		// The puck changes every number in the emitted file and changes nothing
+		// about whether the part fits on the bed.
+		const near = placed({ offset: { x: 250, y: 0 } }, {}, { workZero: { x: 0, y: 0 } });
+		const far = placed({ offset: { x: 250, y: 0 } }, {}, { workZero: { x: 380, y: 380 } });
+		expect(offBed(far).map((d) => d.message)).toEqual(offBed(near).map((d) => d.message));
+	});
+
+	it('blocks export', () => {
+		expect(blocksExport(diagnose(placed({ offset: { x: 250, y: 0 } }).project))).toBe(true);
+	});
+});
