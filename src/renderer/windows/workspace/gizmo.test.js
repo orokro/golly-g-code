@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, it, expect } from 'vitest';
 import {
 	Mode, CORNERS, MIN_SCALE, pointOn, centreOfBox, translation, rotation, scaling, applyDrag,
@@ -180,5 +182,44 @@ describe('the box helpers', () => {
 	it('has eight handles, all on the edge and none in the middle', () => {
 		expect(CORNERS).toHaveLength(8);
 		expect(CORNERS.some((c) => c.fx === 0.5 && c.fy === 0.5)).toBe(false);
+	});
+});
+
+
+describe('the gizmo’s paint order, which decides what you actually grab', () => {
+
+	// Not a unit test of a function, and deliberately so. The defect was pure
+	// paint order: the move target was declared LAST in the template, so it
+	// painted over all eight scale grips. Every grip straddles the box edge, so
+	// half of each one was a move handle wearing a resize cursor — and measured in
+	// a browser, every single grip moved the object instead of scaling it.
+	//
+	// Nothing reachable from a function call can see that, so this reads the
+	// template itself. Crude, but it pins the one thing that has to stay true.
+
+	const source = readFileSync(
+		new URL('../WorkspaceWindow.vue', import.meta.url), 'utf8');
+
+	it('puts the move target UNDER everything else in the gizmo', () => {
+
+		const mover = source.indexOf('class="mover"');
+		const frame = source.indexOf('class="frame"');
+		const knob = source.indexOf('class="knob"');
+		const grip = source.indexOf('class="grip"');
+
+		expect(mover, 'the gizmo has a move target').toBeGreaterThan(-1);
+		expect(grip, 'the gizmo has scale grips').toBeGreaterThan(-1);
+
+		expect(mover).toBeLessThan(grip);
+		expect(mover).toBeLessThan(knob);
+		expect(mover).toBeLessThan(frame);
+	});
+
+	it('keeps the gizmo above the transparent hit strokes', () => {
+
+		// The other half of the same lesson, from the tab handles: a handle that is
+		// not the topmost thing under the cursor is not a handle. It sat under an
+		// 8px invisible stroke and selected the shape behind it instead.
+		expect(source.indexOf('class="hit"')).toBeLessThan(source.indexOf('class="gizmo"'));
 	});
 });

@@ -130,6 +130,19 @@
 				-->
 				<g v-if="gizmo !== null" class="gizmo">
 
+					<!--
+						The move target goes FIRST, so everything else in the gizmo sits
+						on top of it. It was last, which paints it over all eight scale
+						grips — every one of them straddles the box edge, so half of each
+						grip was a move handle wearing a resize cursor. That is what "it
+						tries to drag and scale at once" was.
+					-->
+					<rect class="mover" :x="gizmo.box.minX" :y="gizmo.box.minY"
+						:width="gizmo.box.maxX - gizmo.box.minX"
+						:height="gizmo.box.maxY - gizmo.box.minY"
+						fill="transparent" stroke="none"
+						@pointerdown.stop="onGizmo($event, Mode.TRANSLATE, null)"/>
+
 					<rect class="frame" :x="gizmo.box.minX" :y="gizmo.box.minY"
 						:width="gizmo.box.maxX - gizmo.box.minX"
 						:height="gizmo.box.maxY - gizmo.box.minY"
@@ -149,11 +162,6 @@
 						vector-effect="non-scaling-stroke"
 						@pointerdown.stop="onGizmo($event, Mode.SCALE, handle.corner)"/>
 
-					<rect class="mover" :x="gizmo.box.minX" :y="gizmo.box.minY"
-						:width="gizmo.box.maxX - gizmo.box.minX"
-						:height="gizmo.box.maxY - gizmo.box.minY"
-						fill="transparent" stroke="none"
-						@pointerdown.stop="onGizmo($event, Mode.TRANSLATE, null)"/>
 
 				</g>
 
